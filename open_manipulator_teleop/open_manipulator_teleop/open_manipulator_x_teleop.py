@@ -16,7 +16,7 @@
 #
 # Author: Sungho Woo
 
-import select
+import select 
 import sys
 import termios
 import threading
@@ -56,7 +56,7 @@ class KeyboardController(Node):
         self.arm_joint_names = ['joint1', 'joint2', 'joint3', 'joint4']
 
         self.gripper_position = 0.0
-        self.gripper_max = 0.019
+        self.gripper_max = 0.019  # 
         self.gripper_min = -0.01
 
         self.joint_received = False
