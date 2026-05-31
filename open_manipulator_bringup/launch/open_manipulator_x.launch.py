@@ -15,19 +15,23 @@
 # limitations under the License.
 #
 # Author: Wonho Yun, Sungho Woo, Woojin Wie
+#这个文件是 Open Manipulator X 的 ROS 2 启动文件，
+# 用来把机器人描述、ros2_control 控制器、状态发布器、
+# 初始姿态程序和 RViz 按正确顺序启动起来
 
-from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.actions import RegisterEventHandler
-from launch.conditions import IfCondition
-from launch.conditions import UnlessCondition
-from launch.event_handlers import OnProcessExit
-from launch.substitutions import Command
-from launch.substitutions import FindExecutable
-from launch.substitutions import LaunchConfiguration
-from launch.substitutions import PathJoinSubstitution
-from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
+
+from launch import LaunchDescription  #ROS 2 launch 文件最终返回的“启动清单”
+from launch.actions import DeclareLaunchArgument #用于声明 launch 参数，例如是否启动 RViz、是否使用仿真
+from launch.actions import RegisterEventHandler #用于注册事件处理器，比如“某个节点结束后再启动另一个节点”。
+from launch.conditions import IfCondition  # 表示 x 为真才启动
+from launch.conditions import UnlessCondition #表示 x 为假才启动
+from launch.event_handlers import OnProcessExit #用于监听某个进程退出事件
+from launch.substitutions import Command #执行命令并把输出作为 launch 参数，例如执行 xacro 生成 URDF
+from launch.substitutions import FindExecutable #查找可执行程序路径，例如查找 xacro
+from launch.substitutions import LaunchConfiguration #读取 launch 参数的值
+from launch.substitutions import PathJoinSubstitution #拼接路径
+from launch_ros.actions import Node  #用于定义要启动的 ROS 2 节点
+from launch_ros.substitutions import FindPackageShare  #查找 ROS 2 package 的 share 目录路径
 
 
 def generate_launch_description():
@@ -35,37 +39,37 @@ def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument(
             'start_rviz', default_value='false', description='Whether to execute rviz2'
-        ),
+        ), # 声明参数 start_rviz，默认不启动 RViz。
         DeclareLaunchArgument(
             'prefix',
             default_value='""',
             description='Prefix of the joint and link names',
-        ),
+        ), # 声明关节和 link 名称前缀，例如多机器人时可以加 robot1_
         DeclareLaunchArgument(
             'use_sim',
             default_value='false',
             description='Start robot in Gazebo simulation.',
-        ),
+        ), # 是否使用 Gazebo 仿真
         DeclareLaunchArgument(
             'use_mock_hardware',
             default_value='false',
             description='Use mock hardware mirroring command.',
-        ),
+        ),  # 是否使用 mock hardware，也就是假硬件
         DeclareLaunchArgument(
             'mock_sensor_commands',
             default_value='false',
             description='Enable mock sensor commands.',
-        ),
+        ), #是否启用模拟传感器命令
         DeclareLaunchArgument(
             'port_name',
             default_value='/dev/ttyUSB0',
             description='Port name for hardware connection.',
-        ),
+        ), # 真实机械臂连接串口，默认是 /dev/ttyUSB0
         DeclareLaunchArgument(
             'init_position',
             default_value='true',
             description='Whether to launch the init_position node',
-        ),
+        ), #是否启动初始姿态节点
         DeclareLaunchArgument(
             'ros2_control_type',
             default_value='open_manipulator_x_position',
@@ -89,9 +93,10 @@ def generate_launch_description():
     ros2_control_type = LaunchConfiguration('ros2_control_type')
     init_position_file = LaunchConfiguration('init_position_file')
 
-    # Generate URDF file using xacro
+    # Generate URDF file using xacro  # 下面的代码相当于执行 一个命令行
+    # xacro 文件路径  各种参数   #执行后生成urdf文件
     urdf_file = Command([
-        PathJoinSubstitution([FindExecutable(name='xacro')]),
+        PathJoinSubstitution([FindExecutable(name='xacro')]), # 拼接路径 
         ' ',
         PathJoinSubstitution([
             FindPackageShare('open_manipulator_description'),
@@ -140,10 +145,10 @@ def generate_launch_description():
         init_position_file,
     ])
 
-    # Define nodes
+    # Define nodes 定义一个 ROS 2 节点
     control_node = Node(
-        package='controller_manager',
-        executable='ros2_control_node',
+        package='controller_manager', #节点来自 controller_manager 包
+        executable='ros2_control_node', # 运行的可执行文件是 ros2_control_node
         parameters=[{'robot_description': urdf_file}, controller_manager_config],
         output='both',
         condition=UnlessCondition(use_sim),
@@ -185,6 +190,7 @@ def generate_launch_description():
     )
 
     # Event handlers to ensure order of execution
+    # 设置启动顺序：控制器加载完后再启动 RViz
     delay_rviz_after_joint_state_broadcaster_spawner = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=robot_controller_spawner, on_exit=[rviz_node]

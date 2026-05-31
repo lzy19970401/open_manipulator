@@ -115,13 +115,13 @@ class JointTrajectoryExecutor(Node):
         return self.positions_list[self.current_step]
 
     def check_step_completion(self):
-        target_positions = self.get_step_target_positions()
+        target_positions = self.get_step_target_positions()  # 获取当前步骤的目标关节角度
         return all(
-            abs(curr - target) < self.epsilon
+            abs(curr - target) < self.epsilon              # 每个关节的误差是否在允许范围内
             for curr, target in zip(self.current_positions, target_positions)
         )
 
-    def feedback_callback(self, feedback_msg):
+    def feedback_callback(self, feedback_msg):    
         feedback = feedback_msg.feedback
         self.get_logger().debug(f'Feedback: {feedback.actual.positions}')
 
@@ -196,7 +196,7 @@ class JointTrajectoryExecutor(Node):
         traj = JointTrajectory()
         traj.joint_names = self.joint_names
 
-        times = np.linspace(0, self.duration, self.num_points)
+        times = np.linspace(0, self.duration, self.num_points) # 10/100 0.1
 
         for i in range(self.num_points):
             point = JointTrajectoryPoint()
@@ -209,7 +209,7 @@ class JointTrajectoryExecutor(Node):
             t_norm4 = t_norm3 * t_norm
             t_norm5 = t_norm4 * t_norm
 
-            # Quintic polynomial coefficients for position
+            # Quintic polynomial coefficients for position 用于位置的五次多项式系数
             pos_coeff = 10 * t_norm3 - 15 * t_norm4 + 6 * t_norm5
 
             # Velocity coefficients (derivative of position)
@@ -236,7 +236,7 @@ class JointTrajectoryExecutor(Node):
             point.positions = positions
             point.velocities = velocities
             point.accelerations = accelerations
-            point.time_from_start.sec = int(times[i])
+            point.time_from_start.sec = int(times[i])  
             point.time_from_start.nanosec = int((times[i] % 1) * 1e9)
 
             traj.points.append(point)
