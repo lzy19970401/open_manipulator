@@ -47,6 +47,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            #以下格式为 节点名 = 包名.可执行文件名:main函数（入口函数）
             'joint_trajectory_executor = open_manipulator_bringup.joint_trajectory_executor:main',
             'om_create_udev_rules = open_manipulator_bringup.om_create_udev_rules:main',
         ],

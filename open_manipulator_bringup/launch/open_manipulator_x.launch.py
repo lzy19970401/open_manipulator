@@ -18,8 +18,6 @@
 #这个文件是 Open Manipulator X 的 ROS 2 启动文件，
 # 用来把机器人描述、ros2_control 控制器、状态发布器、
 # 初始姿态程序和 RViz 按正确顺序启动起来
-
-
 from launch import LaunchDescription  #ROS 2 launch 文件最终返回的“启动清单”
 from launch.actions import DeclareLaunchArgument #用于声明 launch 参数，例如是否启动 RViz、是否使用仿真
 from launch.actions import RegisterEventHandler #用于注册事件处理器，比如“某个节点结束后再启动另一个节点”。
@@ -38,7 +36,9 @@ def generate_launch_description():
     # Declare launch arguments
     declared_arguments = [
         DeclareLaunchArgument(
-            'start_rviz', default_value='false', description='Whether to execute rviz2'
+            'start_rviz', 
+            default_value='false', 
+            description='Whether to execute rviz2'
         ), # 声明参数 start_rviz，默认不启动 RViz。
         DeclareLaunchArgument(
             'prefix',
@@ -82,7 +82,8 @@ def generate_launch_description():
         ),
     ]
 
-    # Launch configurations
+    # LaunchConfiguration作用是获取launch文件中声明的参数的值
+    #比如参数‘start_rviz’的值是false，则start_rviz的值为false
     start_rviz = LaunchConfiguration('start_rviz')
     prefix = LaunchConfiguration('prefix')
     use_sim = LaunchConfiguration('use_sim')
@@ -95,8 +96,14 @@ def generate_launch_description():
 
     # Generate URDF file using xacro  # 下面的代码相当于执行 一个命令行
     # xacro 文件路径  各种参数   #执行后生成urdf文件
+    # 相当于终端运行 xacro open_manipulator_x.urdf.xacro 
+    # prefix:="" use_sim:=false 
+    # use_mock_hardware:=false 
+    # mock_sensor_commands:=false 
+    # port_name:=/dev/ttyUSB0 
+    # ros2_control_type:=open_manipulator_x_position
     urdf_file = Command([
-        PathJoinSubstitution([FindExecutable(name='xacro')]), # 拼接路径 
+        PathJoinSubstitution([FindExecutable(name='xacro')]), 
         ' ',
         PathJoinSubstitution([
             FindPackageShare('open_manipulator_description'),

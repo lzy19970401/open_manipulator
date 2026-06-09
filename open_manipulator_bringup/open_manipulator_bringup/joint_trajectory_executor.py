@@ -16,11 +16,11 @@
 #
 # Author: Sungho Woo
 
-import math
-import sys
+import math # 数学库，用于计算角度和弧度之间的转换
+import sys # 系统库，用于退出程序
 
 from control_msgs.action import FollowJointTrajectory
-import numpy as np
+import numpy as np  # 用于计算五次多项式系数
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -91,10 +91,12 @@ class JointTrajectoryExecutor(Node):
         # Create action client for FollowJointTrajectory
         self.action_client = ActionClient(
             self, FollowJointTrajectory, self.action_topic
-        )
+        ) # 类型名  话题名 
+        
+        #订阅了一个话题 JointState类型的话题 可以得到关节状态信息
         self.subscription = self.create_subscription(
             JointState, self.joint_states_topic, self.joint_state_callback, 10
-        )
+        ) # 类型名  话题名  回调函数  队列大小
 
         self.current_positions = None
         self.current_velocities = None
@@ -135,7 +137,8 @@ class JointTrajectoryExecutor(Node):
         self.goal_handle = goal_handle
 
     def joint_state_callback(self, msg):
-        if set(self.joint_names).issubset(set(msg.name)):
+        # 判断当前关节名称是否在关节名称列表中 从这里得到反馈信息
+        if set(self.joint_names).issubset(set(msg.name)): 
             self.current_positions = [
                 msg.position[msg.name.index(j)] for j in self.joint_names
             ]
