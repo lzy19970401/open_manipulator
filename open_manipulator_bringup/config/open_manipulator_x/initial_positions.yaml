@@ -6,11 +6,12 @@ joint_trajectory_executor:
       - joint3
       - joint4
 
-    step_names: [home]  # Names of the steps
+    step_names: [home, ready]  # Names of the steps
 
-    home: [0.0, -1.0, 1.0, 0.0]  # Home position
+    home: [0.0, 0.0, 0.0, 0.0]  # Home position 注意是浮点数 不要写0 写0.0
+    ready: [0.0, -1.0, 1.0, 0.0]  # Ready position
 
-    duration: 3.0 
+    duration: 5.0   # 一定注意是float类型 不要写10 写10.0
     epsilon: 0.01
     action_topic: '/arm_controller/follow_joint_trajectory'
     joint_states_topic: '/joint_states'
