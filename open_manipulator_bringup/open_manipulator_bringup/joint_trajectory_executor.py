@@ -16,6 +16,9 @@
 #
 # Author: Sungho Woo
 
+from typing import Any
+
+
 import math # 数学库，用于计算角度和弧度之间的转换
 import sys # 系统库，用于退出程序
 
@@ -125,6 +128,7 @@ class JointTrajectoryExecutor(Node):
 
     def feedback_callback(self, feedback_msg):    
         feedback = feedback_msg.feedback
+        # 这里只有debug时候才反馈信息 正常运行时候不反馈信息
         self.get_logger().debug(f'Feedback: {feedback.actual.positions}')
 
     def goal_response_callback(self, future):
@@ -138,6 +142,7 @@ class JointTrajectoryExecutor(Node):
 
     def joint_state_callback(self, msg):
         # 判断当前关节名称是否在关节名称列表中 从这里得到反馈信息
+        # 从/joint_states话题中得到当前关节状态信息
         if set(self.joint_names).issubset(set(msg.name)): 
             self.current_positions = [
                 msg.position[msg.name.index(j)] for j in self.joint_names
@@ -178,12 +183,12 @@ class JointTrajectoryExecutor(Node):
 
             # Check if current step has reached its target
             if self.check_step_completion():
-                if not self.reached_target:
-                    self.reached_target = True
-                    self.get_logger().info(f'🎯 Step {self.current_step} completed!')
-                    self.goal_handle = None
-                    self.current_step += 1
-                    self.reached_target = False
+                # if not self.reached_target:
+                #     self.reached_target = True
+                self.get_logger().info(f'🎯 Step {self.current_step} completed!')
+                self.goal_handle = None
+                self.current_step += 1
+                # self.reached_target = False
 
     def shutdown_node(self):
         if self.goal_handle:
