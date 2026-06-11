@@ -203,7 +203,7 @@ def generate_launch_description():
             target_action=robot_controller_spawner, on_exit=[rviz_node]
         )
     )
-
+    # 在 robot_controller_spawner 之后 启动 joint_trajectory_executor
     delay_joint_trajectory_executor_after_controllers = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=robot_controller_spawner,

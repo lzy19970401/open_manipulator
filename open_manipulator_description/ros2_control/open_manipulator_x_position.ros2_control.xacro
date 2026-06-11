@@ -72,6 +72,7 @@
         </joint>
       </xacro:if>
 
+      <!-- gpio是ros2_control扩展接口 做寄存器级配置与映射 -->
       <gpio name="dxl1">
         <param name="type">dxl</param>
         <param name="ID">11</param>

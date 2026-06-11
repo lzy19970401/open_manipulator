@@ -74,10 +74,13 @@ def generate_launch_description():
         'open_manipulator_x.urdf.xacro',
     )
 
+    #等价于终端执行xacro open_manipulator_x.urdf.xacro use_sim:=true
     doc = xacro.process_file(xacro_file, mappings={'use_sim': 'true'})
 
+    #将doc转换为xml格式 缩进为两个空格便于阅读
     robot_desc = doc.toprettyxml(indent='  ')
 
+    #robot_desc 是最终的robot_description
     params = {'robot_description': robot_desc}
 
     node_robot_state_publisher = Node(
@@ -161,9 +164,10 @@ def generate_launch_description():
     # )
 
     return LaunchDescription([
+        # 在gz_spawn_entity 之后 启动 joint_state_broadcaster_spawner
         RegisterEventHandler(
             event_handler=OnProcessExit(
-                target_action=gz_spawn_entity,
+                target_action=gz_spawn_entity,   #
                 on_exit=[joint_state_broadcaster_spawner],
             )
         ),

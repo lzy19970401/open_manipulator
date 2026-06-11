@@ -42,7 +42,7 @@ class KeyboardController(Node):
             JointTrajectory, '/arm_controller/joint_trajectory', 10
         )
 
-        # Action client for GripperCommand
+        # Action client for GripperCommand  (Position and max effort)
         self.gripper_client = ActionClient(
             self, GripperCommand, '/gripper_controller/gripper_cmd'
         )
@@ -86,18 +86,19 @@ class KeyboardController(Node):
             f'Received joint states: {self.arm_joint_positions}, '
             f'Gripper: {self.gripper_position}'
         )
-
-    def get_key(self, timeout=0.01):
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+    
+    # 这里的timeout是等待时间 如果等待时间到了 还没有收到键盘输入 则返回None
+    def get_key(self, timeout=0.01): 
+        fd = sys.stdin.fileno() # 获取标准输入的文件描述符
+        old_settings = termios.tcgetattr(fd) # 获取标准输入的设置
         try:
-            tty.setcbreak(fd)
-            rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+            tty.setcbreak(fd) # 设置标准输入为无缓冲模式
+            rlist, _, _ = select.select([sys.stdin], [], [], timeout) # 等待标准输入有数据 如果等待时间到了 则返回None
             if rlist:
-                return sys.stdin.read(1)
+                return sys.stdin.read(1) # 读取一个字符
             return None
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings) # 恢复标准输入的设置
 
     def send_arm_command(self):
         arm_msg = JointTrajectory()
@@ -109,6 +110,8 @@ class KeyboardController(Node):
         self.arm_publisher.publish(arm_msg)
         self.get_logger().info(f'Arm command sent: {self.arm_joint_positions}')
 
+    # 发送夹爪命令 这里使用的是ActionClient 所以需要等待服务器响应
+    # 底层控制方法是current-based position control 所以需要设置position和max_effort
     def send_gripper_command(self):
         goal_msg = GripperCommand.Goal()
         goal_msg.command.position = self.gripper_position
@@ -122,7 +125,7 @@ class KeyboardController(Node):
     def run(self):
         while not self.joint_received and rclpy.ok() and self.running:
             self.get_logger().info('Waiting for initial joint states...')
-            rclpy.spin_once(self, timeout_sec=1.0)
+            rclpy.spin_once(self, timeout_sec=1.0) # 等待1秒 如果收到joint_states 则退出循环 否则继续等待
 
         self.get_logger().info('Ready to receive keyboard input!')
         self.get_logger().info(
@@ -135,8 +138,10 @@ class KeyboardController(Node):
                 current_time = time.time()
 
                 if key is None:
-                    continue
-
+                    continue  # 如果key为None 则执行下一次循环
+                
+                # 如果当前时间减去上次命令时间大于命令间隔 则执行命令
+                #这么做是为了避免频繁发送命令 导致机器人抖动
                 if current_time - self.last_command_time >= self.command_interval:
                     if key == '\x1b':  # ESC
                         self.running = False
@@ -144,7 +149,7 @@ class KeyboardController(Node):
                     elif key == '1':
                         new_pos = min(
                             self.arm_joint_positions[0] + self.max_delta, 3.14
-                        )
+                        )   #进行软限位 避免超出关节范围 以下均是软限位
                         self.arm_joint_positions[0] = new_pos
                     elif key == 'q':
                         new_pos = max(
@@ -197,10 +202,10 @@ class KeyboardController(Node):
 
 def main():
     rclpy.init()
-    node = KeyboardController()
+    node = KeyboardController() # 创建一个键盘控制器节点
 
-    thread = threading.Thread(target=node.run)
-    thread.start()
+    thread = threading.Thread(target=node.run) # 创建一个线程 执行node.run()
+    thread.start() # 启动线程
 
     try:
         while thread.is_alive():

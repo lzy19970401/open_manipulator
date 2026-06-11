@@ -1,4 +1,5 @@
-/**:
+# 其实这个文件是 controllers.yaml 更合适 因为可以是硬件 也可以用于仿真
+/**:    # /**: 是 YAML 的根节点，表示这是一个 YAML 文档的开始
   controller_manager:
     ros__parameters:
       update_rate: 100  # Hz  
