@@ -152,6 +152,7 @@ class JointTrajectoryExecutor(Node):
             ]
 
             # Check if current step has reached its target
+            # 接受目标并收到response后 目标句柄则不为空
             if self.goal_handle is None:
                 if self.current_step < len(self.positions_list):
                     target_positions = self.get_step_target_positions()
