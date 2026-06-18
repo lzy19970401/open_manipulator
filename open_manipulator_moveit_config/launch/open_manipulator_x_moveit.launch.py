@@ -60,9 +60,9 @@ def generate_launch_description():
     publish_robot_description_semantic = LaunchConfiguration('publish_robot_description_semantic')
 
     moveit_config = (
-        MoveItConfigsBuilder(
+        MoveItConfigsBuilder(   #构建 MoveIt 配置
             robot_name='open_manipulator_x', package_name='open_manipulator_moveit_config')
-        .robot_description_semantic(
+        .robot_description_semantic(  #继续调用 MoveItConfigsBuilder 的 API，添加语义描述文件
             str(Path('config') / 'open_manipulator_x' / 'open_manipulator_x.srdf'))
         .joint_limits(str(Path('config') / 'open_manipulator_x' / 'joint_limits.yaml'))
         .trajectory_execution(
