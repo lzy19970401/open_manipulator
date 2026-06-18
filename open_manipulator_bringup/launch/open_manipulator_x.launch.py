@@ -72,7 +72,7 @@ def generate_launch_description():
         ), #是否启动初始姿态节点
         DeclareLaunchArgument(
             'ros2_control_type',
-            default_value='open_manipulator_x_position',
+            default_value='open_manipulator_x_position', #默认使用位置控制 后面可能修改
             description='Type of ros2_control',
         ),
         DeclareLaunchArgument(
