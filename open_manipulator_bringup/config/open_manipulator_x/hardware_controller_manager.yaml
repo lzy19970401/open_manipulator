@@ -2,7 +2,7 @@
 /**:    # /**: 是 YAML 的根节点，表示这是一个 YAML 文档的开始
   controller_manager:
     ros__parameters:
-      update_rate: 100  # Hz  
+      update_rate: 200  #100  # Hz  
 
       joint_state_broadcaster:
         type: joint_state_broadcaster/JointStateBroadcaster
