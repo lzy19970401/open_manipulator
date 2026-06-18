@@ -126,6 +126,8 @@ def generate_launch_description():
             'joint_state_broadcaster',
             '--controller-manager',
             '/controller_manager',
+            '--controller-manager-timeout', '30.0', # 控制器管理器超时时间 30秒
+            '--switch-timeout', '10.0', # 控制器切换超时时间 10秒
         ],
         output='screen',
     )
