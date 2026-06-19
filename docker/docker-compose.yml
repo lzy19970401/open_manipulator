@@ -27,5 +27,6 @@ services:
       - /tmp/.docker.xauth:/tmp/.docker.xauth:rw
       - ./workspace:/workspace
       - ../:/root/ros2_ws/src/open_manipulator/
+      - ../.docker_install:/root/ros2_ws/install   # 新增
     privileged: true
     command: bash
