@@ -1,0 +1,144 @@
+/* Robot Kinematics Course — shared lesson styles */
+:root {
+  --text: #1a1a1a;
+  --muted: #555;
+  --accent: #2563eb;
+  --bg: #fafafa;
+  --card: #fff;
+  --border: #e5e5e5;
+  --correct: #15803d;
+  --wrong: #b91c1c;
+  --font-serif: "Georgia", "Times New Roman", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --max-width: 42rem;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  font-size: 18px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-serif);
+  line-height: 1.65;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 2rem;
+}
+
+h1 { font-size: 1.75rem; margin-top: 0; }
+h2 { font-size: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+
+.meta {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 2rem;
+}
+
+.lead {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+aside, .callout {
+  background: var(--card);
+  border-left: 3px solid var(--accent);
+  padding: 0.75rem 1rem;
+  margin: 1.5rem 0;
+  font-size: 0.95rem;
+}
+
+code, .mono {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.88em;
+  background: #eee;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+figure {
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+figure svg { max-width: 100%; height: auto; }
+
+figcaption {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+}
+
+.quiz {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+  margin: 2rem 0;
+}
+
+.quiz h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.quiz-options { list-style: none; padding: 0; margin: 1rem 0; }
+
+.quiz-options li { margin: 0.5rem 0; }
+
+.quiz-options button {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.quiz-options button:hover { border-color: var(--accent); }
+
+.quiz-feedback {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  min-height: 1.5rem;
+  margin-top: 0.75rem;
+}
+
+.quiz-feedback.correct { color: var(--correct); }
+.quiz-feedback.wrong { color: var(--wrong); }
+
+nav.lesson-nav {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+a { color: var(--accent); }
+
+.cite {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+@media print {
+  body { background: white; padding: 0; }
+  .quiz-options button { border: 1px solid #999; }
+}

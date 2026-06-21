@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：动力学库对比</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 40rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.82rem; }
+    th, td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+    th { background: #eee; }
+  </style>
+</head>
+<body>
+
+  <p class="meta"><a href="../lessons/0004-dynamics-libraries-comparison.html">← 第 4 课</a></p>
+  <h1>动力学库对比速查</h1>
+
+  <h2>先分类</h2>
+  <table>
+    <tr><th>类</th><th>用途</th><th>例子</th></tr>
+    <tr><td>解析动力学</td><td>τ, g(q), M, J, 导数</td><td>Pinocchio, KDL, RBDL, Drake Plant</td></tr>
+    <tr><td>物理仿真</td><td>接触、积分、传感器</td><td>MuJoCo, Gazebo</td></tr>
+    <tr><td>最优控制</td><td>DDP/MPC 轨迹</td><td>Crocoddyl, Drake opt</td></tr>
+  </table>
+
+  <h2>解析库一句话</h2>
+  <table>
+    <tr><th>库</th><th>一句话</th></tr>
+    <tr><td><strong>Pinocchio</strong></td><td>现代首选；URDF；RNEA/ABA；解析导数；ROS 2 包</td></tr>
+    <tr><td><strong>KDL</strong></td><td>ROS 老牌；OMX 已在用；JntToGravity；IK 强</td></tr>
+    <tr><td><strong>RBDL</strong></td><td>Featherstone 轻量实现；教学/legacy</td></tr>
+    <tr><td><strong>RBDyn</strong></td><td>人形控制栈 mc_rtc 系</td></tr>
+    <tr><td><strong>Drake</strong></td><td>系统建模+仿真+优化；重量级</td></tr>
+  </table>
+
+  <h2>OMX 重力补偿</h2>
+  <table>
+    <tr><th>库</th><th>调用</th></tr>
+    <tr><td>KDL</td><td><code>ChainDynParam::JntToGravity(q, G)</code></td></tr>
+    <tr><td>Pinocchio</td><td><code>computeGeneralizedGravity(model, data, q)</code></td></tr>
+  </table>
+
+  <h2>选型</h2>
+  <ul>
+    <li>只 g(q) / RNEA → KDL 或 Pinocchio</li>
+    <li>MPC / 需要 ∂τ/∂q → Pinocchio</li>
+    <li>接触 sim → Gazebo / MuJoCo（非替代）</li>
+  </ul>
+
+  <p class="cite">
+    <a href="https://github.com/jslee02/awesome-robotics-libraries/blob/main/COMPARISONS.md">awesome-robotics-libraries</a> ·
+    <a href="https://tcoptrob.github.io/resources/modeling_tools/">IEEE RAS 建模工具</a>
+  </p>
+
+</body>
+</html>

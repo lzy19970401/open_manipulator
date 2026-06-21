@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 4 课：常见动力学库对比</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.lib { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.78rem; }
+    table.lib th, table.lib td { border: 1px solid var(--border); padding: 0.35rem 0.45rem; vertical-align: top; }
+    table.lib th { background: #eee; }
+    .tag { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin: 0.1rem; }
+    .tag-analytical { background: #dbeafe; color: #1e40af; }
+    .tag-sim { background: #fef3c7; color: #92400e; }
+    .tag-opt { background: #dcfce7; color: #166534; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 4 课 · 动力学库选型 · 约 12 分钟 ·
+    <a href="0003-pinocchio-gravity-compensation.html">← 第 3 课</a>
+  </p>
+
+  <h1>常见动力学库对比：Pinocchio 与朋友们</h1>
+
+  <p class="lead">
+    先分<strong>两类</strong>：算 τ=g(q)、RNEA 的<strong>解析动力学库</strong>（控制/规划用）；
+    与带接触、摩擦、时间积分的<strong>物理仿真引擎</strong>（验证/ sim 用）。
+    混为一谈会选错工具。
+  </p>
+
+  <h2>1. 两类工具</h2>
+
+  <table class="lib">
+    <tr>
+      <th>类型</th>
+      <th>回答的问题</th>
+      <th>代表</th>
+    </tr>
+    <tr>
+      <td><span class="tag tag-analytical">解析动力学</span></td>
+      <td>给定 q, q̇, q̈，τ 是多少？g(q)、M(q)、J(q)？</td>
+      <td>Pinocchio, KDL, RBDL, RBDyn, Drake MultibodyPlant</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-sim">物理仿真</span></td>
+      <td>力/接触作用下，系统随时间怎么演化？</td>
+      <td>MuJoCo, Gazebo (ODE/Bullet), Isaac Sim</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-opt">最优控制</span></td>
+      <td>在动力学约束下，什么轨迹/力矩最优？</td>
+      <td>Crocoddyl (+ Pinocchio), Drake TrajectoryOptimization</td>
+    </tr>
+  </table>
+
+  <aside>
+    第 3 课重力补偿属于<strong>解析动力学</strong>：每周期算 g(q)，不是跑仿真器。
+    OpenMANIPULATOR 现有实现用 <strong>KDL</strong>（<a href="0003-pinocchio-gravity-compensation.html">第 3 课</a>）。
+  </aside>
+
+  <h2>2. 解析动力学库对照表</h2>
+
+  <p class="cite">
+    综合 <a href="https://github.com/jslee02/awesome-robotics-libraries/blob/main/COMPARISONS.md">awesome-robotics-libraries/COMPARISONS.md</a>、
+    <a href="https://tcoptrob.github.io/resources/modeling_tools/">IEEE RAS 建模工具页</a>、各项目 README。
+  </p>
+
+  <table class="lib">
+    <tr>
+      <th>库</th>
+      <th>逆动力学<br>RNEA / g(q)</th>
+      <th>正动力学<br>ABA</th>
+      <th>URDF</th>
+      <th>Python</th>
+      <th>解析导数<br>∂τ/∂q …</th>
+      <th>ROS 2</th>
+      <th>特点 / 适用</th>
+    </tr>
+    <tr>
+      <td><strong>Pinocchio</strong></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅ 原生</td>
+      <td>✅ 强</td>
+      <td>✅ 核心卖点</td>
+      <td>✅ humble 包</td>
+      <td>现代首选；MPC/DDP（Crocoddyl）、优化控制；活跃维护</td>
+    </tr>
+    <tr>
+      <td><strong>KDL</strong></td>
+      <td>✅ Tree/Chain</td>
+      <td>⚠️ 有限</td>
+      <td>⚠️ kdl_parser</td>
+      <td>✅ PyKDL</td>
+      <td>❌</td>
+      <td>✅ 老牌</td>
+      <td><strong>你仓库已在用</strong>；IK 求解器多；JntToGravity 简单稳定</td>
+    </tr>
+    <tr>
+      <td><strong>RBDL</strong></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅ addon</td>
+      <td>✅</td>
+      <td>⚠️ CasADi</td>
+      <td>⚠️ 社区</td>
+      <td>Featherstone 教科书直译；轻量；维护活跃度低于 Pinocchio</td>
+    </tr>
+    <tr>
+      <td><strong>RBDyn</strong></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>⚠️</td>
+      <td>⚠️</td>
+      <td>人形/双足栈（mc_rtc）常用；与 Pinocchio 功能重叠</td>
+    </tr>
+    <tr>
+      <td><strong>Drake</strong></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅ 强</td>
+      <td>✅ AutoDiff</td>
+      <td>⚠️ 独立栈</td>
+      <td>TRI 生态；系统建模+优化+仿真一体；学习曲线陡</td>
+    </tr>
+  </table>
+
+  <h2>3. 逐个速览</h2>
+
+  <h3>Pinocchio</h3>
+  <p>
+    <a href="https://github.com/stack-of-tasks/pinocchio">stack-of-tasks/pinocchio</a> —
+    Featherstone 算法的高效 C++ 实现 + Python。
+    <code>computeGeneralizedGravity</code>、RNEA、ABA、CRBA、Jacobian，
+    以及 τ、M 对 q 的<strong>解析导数</strong>（MPC、Whole-body control 需要）。
+    论文称相对 RBDL 在多项任务上更快、更灵活
+    (<a href="https://homepages.laas.fr/ostasse/hugo/publication/int_conf/carpentier-sii-2019/">Carpentier et al., SII 2019</a>)。
+  </p>
+
+  <h3>KDL（Orocos KDL）</h3>
+  <p>
+    <a href="https://github.com/orocos/orocos_kinematics_dynamics">orocos_kinematics_dynamics</a> —
+    ROS 生态里<strong>历史最久</strong>的链式/树式动力学。
+    ROBOTIS <code>JntToGravity</code>、你仓库 <code>TreeIdSolver_RNE</code> 都走 KDL。
+    优势：与 ros2_control / MoveIt 集成成熟、文档/案例多。
+    劣势：无原生 URDF（靠 kdl_parser）、无解析导数、API 较老。
+  </p>
+
+  <h3>RBDL</h3>
+  <p>
+    <a href="https://github.com/rbdl/rbdl">rbdl/rbdl</a> —
+    同样基于 Featherstone《Rigid Body Dynamics Algorithms》。
+    RNEA / ABA / CRBA + 基础接触。教学/研究里常见，新项目更常选 Pinocchio。
+  </p>
+
+  <h3>Drake</h3>
+  <p>
+    <a href="https://drake.mit.edu/">drake.mit.edu</a> —
+    不仅是动力学库，而是<strong>建模 + 仿真 + 优化</strong>平台。
+    MultibodyPlant 可算逆动力学；若做轨迹优化、系统级仿真，Drake 合适；
+    若只需控制器里算 g(q)，引入 Drake 往往过重。
+  </p>
+
+  <h3>仿真器（对照，不是替代品）</h3>
+  <ul>
+    <li><strong>MuJoCo</strong> — 接触、摩擦、快速 sim；强化学习/抓取 sim 常用；不替代解析 g(q)。</li>
+    <li><strong>Gazebo</strong> — OpenMANIPULATOR 已有 launch；ODE/Bullet 积分；适合集成 ROS 2 传感器与可视化。</li>
+  </ul>
+
+  <h2>4. 选型决策（OpenMANIPULATOR 视角）</h2>
+
+  <figure>
+    <svg viewBox="0 0 460 200" width="460" height="200" aria-label="决策树">
+      <text x="230" y="22" text-anchor="middle" font-size="11" font-family="sans-serif" fill="#333">我要做什么？</text>
+      <rect x="155" y="35" width="150" height="28" rx="4" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="230" y="54" text-anchor="middle" font-size="10" font-family="sans-serif">重力补偿 / 逆动力学 τ</text>
+      <rect x="30" y="95" width="120" height="36" rx="4" fill="#dcfce7" stroke="#15803d"/>
+      <text x="90" y="112" text-anchor="middle" font-size="9" font-family="sans-serif">已有 KDL 在跑</text>
+      <text x="90" y="125" text-anchor="middle" font-size="9" font-family="sans-serif">→ 继续 KDL 或迁 Pinocchio</text>
+      <rect x="170" y="95" width="120" height="36" rx="4" fill="#dcfce7" stroke="#15803d"/>
+      <text x="230" y="112" text-anchor="middle" font-size="9" font-family="sans-serif">要做 MPC / 优化</text>
+      <text x="230" y="125" text-anchor="middle" font-size="9" font-family="sans-serif">→ Pinocchio (+ Crocoddyl)</text>
+      <rect x="310" y="95" width="120" height="36" rx="4" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="370" y="112" text-anchor="middle" font-size="9" font-family="sans-serif">要接触/碰撞 sim</text>
+      <text x="370" y="125" text-anchor="middle" font-size="9" font-family="sans-serif">→ Gazebo / MuJoCo</text>
+      <line x1="190" y1="63" x2="90" y2="95" stroke="#666"/>
+      <line x1="230" y1="63" x2="230" y2="95" stroke="#666"/>
+      <line x1="270" y1="63" x2="370" y2="95" stroke="#666"/>
+      <text x="230" y="165" text-anchor="middle" font-size="9" fill="#555" font-family="sans-serif">Drake：系统级建模+优化时再考虑，非 g(q) 首选</text>
+    </svg>
+    <figcaption>先按任务选类别，再在解析库中比较</figcaption>
+  </figure>
+
+  <table class="lib">
+    <tr><th>你的任务</th><th>推荐</th><th>理由</th></tr>
+    <tr>
+      <td>重力补偿 g(q)，快速落地</td>
+      <td>KDL 或 Pinocchio</td>
+      <td>ROBOTIS 已验证 KDL；Pinocchio API 更现代、便于扩展</td>
+    </tr>
+    <tr>
+      <td>对比验证 URDF 惯性</td>
+      <td>Pinocchio + KDL 双算</td>
+      <td>两库 g(q) 应接近；偏差大 → 查 URDF / 关节轴</td>
+    </tr>
+    <tr>
+      <td>Whole-body MPC / OCP</td>
+      <td>Pinocchio + Crocoddyl</td>
+      <td>需要 ∂τ/∂q 等导数</td>
+    </tr>
+    <tr>
+      <td>在 ROS 2 里仿真 OMX</td>
+      <td>Gazebo + ros2_control</td>
+      <td>已有 launch；与解析库互补</td>
+    </tr>
+  </table>
+
+  <h2>5. Pinocchio vs KDL：对你最相关的对比</h2>
+
+  <table class="lib">
+    <tr><th>维度</th><th>KDL</th><th>Pinocchio</th></tr>
+    <tr><td>重力补偿</td><td><code>JntToGravity</code></td><td><code>computeGeneralizedGravity</code></td></tr>
+    <tr><td>完整逆动力学</td><td><code>TreeIdSolver_RNE</code></td><td><code>rnea</code></td></tr>
+    <tr><td>模型来源</td><td>chain/tree + kdl_parser</td><td><code>buildModelFromUrdf</code></td></tr>
+    <tr><td>扩展至优化控制</td><td>弱</td><td>强（导数、CasADi）</td></tr>
+    <tr><td>迁移成本</td><td>零（已在用）</td><td>新依赖、重新映射 nq/nv</td></tr>
+  </table>
+
+  <h2>6. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>控制器里每周期算 g(q) 做重力补偿，应选哪类库？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="correct">A. 解析动力学库，如 Pinocchio 或 KDL</button></li>
+      <li><button type="button" data-answer="wrong">B. 物理仿真引擎，如 MuJoCo 或 Gazebo</button></li>
+      <li><button type="button" data-answer="wrong">C. 路径规划库，如 OMPL 或 MoveIt 规划器</button></li>
+      <li><button type="button" data-answer="wrong">D. 视觉库，如 OpenCV 或 PCL 点云库</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>相对 KDL，Pinocchio 最突出的优势通常是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 内置七种逆解 IK 求解器类</button></li>
+      <li><button type="button" data-answer="correct">B. 动力学解析导数与现代优化栈</button></li>
+      <li><button type="button" data-answer="wrong">C. 原生 Gazebo 插件与传感器驱动</button></li>
+      <li><button type="button" data-answer="wrong">D. 仅支持 Lua 模型而不支持 URDF</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <h2>7. 下一课</h2>
+  <p>
+    可选 A：Pinocchio vs KDL 双算 g(q) 对照实验（<code>teaching-examples/</code>）。<br>
+    可选 B：ros2_control 里 effort 模式与动力学库如何衔接。
+  </p>
+
+  <aside>
+    <strong>有问题？</strong>问：「OMX 只有四轴，Drake 还值得学吗？」或「Crocoddyl 和 Pinocchio 什么关系？」
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="../reference/dynamics-libraries-comparison.html">速查表</a> ·
+    <a href="0003-pinocchio-gravity-compensation.html">第 3 课</a> ·
+    <a href="../RESOURCES.md">RESOURCES</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。g(q) 是解析公式，用 RNEA/专用重力算法，不是仿真积分。',
+      wrong: '不对。仿真器做时间步进；重力补偿要解析逆动力学库。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。解析导数 + URDF + Python 使其在 MPC/OCP 栈里更常见。',
+      wrong: '不对。IK 求解器多是 KDL 强项；Pinocchio 强项在动力学与导数。'
+    });
+  </script>
+</body>
+</html>

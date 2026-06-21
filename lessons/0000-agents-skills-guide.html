@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>0000 · .agents/skills 使用指南</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.skills { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.78rem; }
+    table.skills th, table.skills td { border: 1px solid var(--border); padding: 0.45rem 0.5rem; vertical-align: top; }
+    table.skills th { background: #eee; position: sticky; top: 0; }
+    .cmd { font-family: ui-monospace, monospace; font-size: 0.85em; white-space: nowrap; }
+    .badge { font-size: 0.65rem; padding: 0.12rem 0.35rem; border-radius: 3px; margin-left: 0.25rem; }
+    .badge-user { background: #dbeafe; color: #1e40af; }
+    .badge-auto { background: #f3e8ff; color: #6b21a8; }
+    .badge-sub { background: #f5f5f5; color: #555; }
+    .flow { font-family: var(--font-sans); font-size: 0.88rem; background: var(--card); border: 1px solid var(--border); padding: 1rem; line-height: 1.8; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">0000 · 入门 · 本仓库 Agent Skills 地图 · 约 10 分钟</p>
+
+  <h1>.agents/skills 使用指南</h1>
+
+  <p class="lead">
+    本仓库安装了 Matt Pocock 的 <strong>engineering + productivity skills</strong>（见根目录 <code>skills-lock.json</code>）。
+    在 Cursor 对话里输入 <code>/技能名</code> 调用。本文说明<strong>何时用、会产出什么</strong>。
+  </p>
+
+  <h2>1. 先用这个：不知道选哪个？</h2>
+
+  <table class="skills">
+    <tr><th>命令</th><th>何时用</th><th>产出</th></tr>
+    <tr>
+      <td class="cmd">/ask-matt</td>
+      <td>不确定该走哪条工作流</td>
+      <td>对话中的<strong>路径建议</strong>（不写入文件）</td>
+    </tr>
+    <tr>
+      <td class="cmd">/setup-matt-pocock-skills</td>
+      <td><strong>第一次</strong>用工程类 skill 之前（一次性）</td>
+      <td><code>AGENTS.md</code> 的 Agent skills 块；<code>docs/agents/issue-tracker.md</code>、<code>triage-labels.md</code>、<code>domain.md</code></td>
+    </tr>
+  </table>
+
+  <aside>
+    本仓库已 setup：issue 在 <code>.scratch/</code>（Local markdown），triage 标签为默认五角色，domain 为 single-context。
+    见 <code>AGENTS.md</code>。
+  </aside>
+
+  <h2>2. 主流程：从想法到实现</h2>
+
+  <div class="flow">
+    <strong>有代码库的新功能</strong><br>
+    /grill-with-docs →（可选 /prototype + /handoff）→ /to-prd → /to-issues → <em>每 issue 新会话实现</em><br><br>
+    <strong>无代码库，只 sharpen 想法</strong><br>
+    /grill-me（不落盘）<br><br>
+    <strong>外部进来的 bug/需求</strong><br>
+    /triage → ready-for-agent 的 issue → 新会话实现
+  </div>
+
+  <p class="cite">
+    「实现」步骤在 skill 集里<strong>没有单独的 /implement</strong>——通常在新对话里把 PRD + 单个 issue 交给 Agent 即可。
+  </p>
+
+  <h2>3. 全部 Skills 一览</h2>
+
+  <p>
+    <span class="badge badge-user">用户调用</span> 必须你输入 <code>/name</code>，不占每轮 context<br>
+    <span class="badge badge-auto">可自动</span> Agent 或其它 skill 也可唤起<br>
+    <span class="badge badge-sub">子 skill</span> 通常被别的 skill 内部使用，也可直接 @
+  </p>
+
+  <table class="skills">
+    <tr>
+      <th>命令</th>
+      <th>类型</th>
+      <th>什么时候用</th>
+      <th>使用后会产出什么</th>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">配置与路由</td></tr>
+    <tr>
+      <td class="cmd">/setup-matt-pocock-skills</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>首次使用 to-prd / triage / to-issues 等之前</td>
+      <td><code>AGENTS.md</code>；<code>docs/agents/*.md</code> 三份配置</td>
+    </tr>
+    <tr>
+      <td class="cmd">/ask-matt</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>迷路时选 flow</td>
+      <td>文字版路径说明</td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">想法打磨（Grill）</td></tr>
+    <tr>
+      <td class="cmd">/grill-with-docs</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>有代码库，要把功能/设计问清楚并<strong>写入文档</strong></td>
+      <td>对话结论；懒创建/更新 <code>CONTEXT.md</code>、<code>docs/adr/*.md</code>（经 domain-modeling）</td>
+    </tr>
+    <tr>
+      <td class="cmd">/grill-me</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>无代码库或不想落盘，只 interview</td>
+      <td>仅对话，<strong>不</strong>写 CONTEXT/ADR</td>
+    </tr>
+    <tr>
+      <td class="cmd">/grilling</td>
+      <td><span class="badge badge-auto">可自动</span></td>
+      <td>stress-test 任意计划；被 grill-* / triage / improve-* 调用</td>
+      <td>逐问逐答的设计决策（是否落盘取决于外层 skill）</td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">领域与架构</td></tr>
+    <tr>
+      <td class="cmd">/domain-modeling</td>
+      <td><span class="badge badge-auto">可自动</span></td>
+      <td>整理术语、写 glossary、记录 ADR</td>
+      <td><code>CONTEXT.md</code>；<code>docs/adr/NNNN-*.md</code>（需要时）</td>
+    </tr>
+    <tr>
+      <td class="cmd">/codebase-design</td>
+      <td><span class="badge badge-auto">可自动</span></td>
+      <td>设计 deep module、定 seam、接口设计</td>
+      <td>对话中的模块/接口设计；词汇见 skill 内 glossary</td>
+    </tr>
+    <tr>
+      <td class="cmd">/improve-codebase-architecture</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>有空扫一遍代码库，找「加深模块」机会</td>
+      <td>系统临时目录下 <code>architecture-review-&lt;timestamp&gt;.html</code> 报告；选中项后进入 grilling</td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">规格 → Issue</td></tr>
+    <tr>
+      <td class="cmd">/to-prd</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>当前对话已讨论够多，要合成 PRD（<strong>不再 interview</strong>）</td>
+      <td>PRD 发布到 issue tracker（本仓库：<code>.scratch/&lt;feature&gt;/PRD.md</code>）；标签 <code>ready-for-agent</code></td>
+    </tr>
+    <tr>
+      <td class="cmd">/to-issues</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>把 PRD/计划拆成可独立领取的 vertical slice</td>
+      <td>多个 issue 文件 <code>.scratch/.../issues/NN-slug.md</code>；带 Blocked by、验收标准</td>
+    </tr>
+    <tr>
+      <td class="cmd">/triage</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>处理<strong>外部</strong>进来的 bug/需求/外部 PR；维护者分诊</td>
+      <td>issue 上 triage 标签/Status；评论（Agent brief / needs-info）；可能 <code>.out-of-scope/*.md</code></td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">跨会话与原型</td></tr>
+    <tr>
+      <td class="cmd">/handoff</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>上下文将满；要<strong>新开会话</strong>继续</td>
+      <td>OS 临时目录下的 handoff <strong>.md</strong>（非 workspace）；含 suggested skills</td>
+    </tr>
+    <tr>
+      <td class="cmd">/prototype</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>必须用 runnable 代码验证逻辑或 UI</td>
+      <td>可丢弃的原型代码（终端 app 或多版 UI）；<strong>明确标记 throwaway</strong></td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">实现质量</td></tr>
+    <tr>
+      <td class="cmd">/tdd</td>
+      <td><span class="badge badge-auto">可自动</span></td>
+      <td>测试先行、red-green-refactor、集成测试</td>
+      <td>测试代码 + 实现代码（按 skill 的 vertical RED-GREEN 节奏）</td>
+    </tr>
+    <tr>
+      <td class="cmd">/diagnosing-bugs</td>
+      <td><span class="badge badge-auto">可自动</span></td>
+      <td>难 bug、回归、性能问题；「debug this」</td>
+      <td>诊断循环产出：复现脚本/测试、根因说明、修复（及可选 learning）</td>
+    </tr>
+
+    <tr><td colspan="4" style="background:#f0f0f0;font-weight:600;">学习与元技能</td></tr>
+    <tr>
+      <td class="cmd">/teach</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>在多会话中系统学一个主题（如运动学、Pinocchio）</td>
+      <td><code>MISSION.md</code>、<code>lessons/*.html</code>、<code>reference/*.html</code>、<code>learning-records/*.md</code>、<code>GLOSSARY.md</code> 等</td>
+    </tr>
+    <tr>
+      <td class="cmd">/writing-great-skills</td>
+      <td><span class="badge badge-user">用户</span></td>
+      <td>自己编写/修改 Cursor skill</td>
+      <td>对话中的 skill 写作建议（参考 skill 内 GLOSSARY）</td>
+    </tr>
+  </table>
+
+  <h2>4. 本仓库已产生的 teach 产物（示例）</h2>
+
+  <p>若你一直在用 <code>/teach</code> 学 OpenMANIPULATOR，这些文件是<strong>教学 workspace</strong>，与 Matt 工程 flow 并行存在：</p>
+  <ul>
+    <li><a href="0001-what-is-robot-kinematics.html">0001</a>–<a href="0004-dynamics-libraries-comparison.html">0004</a> 课程</li>
+    <li><code>CONTEXT.md</code> — 领域词汇（domain-modeling 也会写）</li>
+    <li><code>teaching-examples/</code> — Pinocchio 示例（非 ROS 包）</li>
+  </ul>
+
+  <h2>5. 快速决策</h2>
+
+  <table class="skills">
+    <tr><th>我想…</th><th>先用</th></tr>
+    <tr><td>学概念、不上项目</td><td class="cmd">/teach</td></tr>
+    <tr><td>做新功能，还没想清楚</td><td class="cmd">/grill-with-docs</td></tr>
+    <tr><td>讨论够了，要 PRD</td><td class="cmd">/to-prd</td></tr>
+    <tr><td>PRD 要拆 ticket</td><td class="cmd">/to-issues</td></tr>
+    <tr><td>处理 GitHub/本地 issue 队列</td><td class="cmd">/triage</td></tr>
+    <tr><td>代码库结构变乱</td><td class="cmd">/improve-codebase-architecture</td></tr>
+    <tr><td>bug 查不出原因</td><td class="cmd">/diagnosing-bugs</td></tr>
+    <tr><td>整理 OMX 领域词</td><td class="cmd">/domain-modeling</td></tr>
+    <tr><td>对话太长要换会话</td><td class="cmd">/handoff</td></tr>
+  </table>
+
+  <h2>6. 上下文卫生（重要）</h2>
+
+  <ul>
+    <li><strong>grill → to-prd → to-issues</strong> 尽量在同一未压缩会话里完成。</li>
+    <li>每个 <strong>issue 实现</strong> 开<strong>新会话</strong>，只带 PRD + 该 issue。</li>
+    <li><code>/handoff</code> = 新会话 + 文件；<code>/compact</code>（内置）= 同会话摘要，别在中途 compact。</li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>输入 <code>/ask-matt</code> 或问：「我要做 Pinocchio 重力补偿控制器，该走哪几个 skill？」
+  </aside>
+
+  <nav class="lesson-nav">
+    下一课: <a href="0001-what-is-robot-kinematics.html">0001 运动学入门</a> ·
+    <a href="../AGENTS.md">AGENTS.md</a> ·
+    <a href="../.agents/skills/ask-matt/SKILL.md">ask-matt 源码</a>
+  </nav>
+
+</body>
+</html>

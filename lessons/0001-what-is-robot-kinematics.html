@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 1 课：运动学是什么？</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+  <p class="meta">第 1 课 · 机器人运动学 · 约 8 分钟 ·
+    <a href="0000-agents-skills-guide.html">0000 Skills 指南</a>
+  </p>
+
+  <h1>运动学是什么？</h1>
+
+  <p class="lead">
+    在你写 <code>setPoseTarget</code> 或读 <code>/joint_states</code> 之前，
+    先搞清楚：运动学只回答<strong>几何</strong>问题——机器人<strong>在哪里</strong>、<strong>怎么动</strong>，不涉及力。
+  </p>
+
+  <h2>1. 运动学 vs 动力学</h2>
+
+  <p>
+    <strong>运动学（Kinematics）</strong>研究关节变量与末端位姿之间的映射，不管电机输出多大力矩、也不管重力。
+    <strong>动力学（Dynamics）</strong>才涉及力、质量、惯性——例如你仓库里的重力补偿控制器属于动力学范畴。
+  </p>
+
+  <aside>
+    <strong>本课程范围：</strong>只学运动学。Mission 里写的 MoveIt 规划失败、四轴臂姿态约束，都是 kinematics 问题。
+  </aside>
+
+  <h2>2. 两种方向</h2>
+
+  <table style="width:100%; border-collapse:collapse; font-family:var(--font-sans); font-size:0.9rem;">
+    <tr style="border-bottom:1px solid var(--border);">
+      <th style="text-align:left; padding:0.5rem 0;">名称</th>
+      <th style="text-align:left; padding:0.5rem 0;">输入 → 输出</th>
+      <th style="text-align:left; padding:0.5rem 0;">你何时遇到</th>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem 0;"><strong>正运动学 FK</strong></td>
+      <td style="padding:0.5rem 0;">关节角 → 末端位姿</td>
+      <td style="padding:0.5rem 0;">读 <code>/joint_states</code>，想知道夹爪在哪</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem 0;"><strong>逆运动学 IK</strong></td>
+      <td style="padding:0.5rem 0;">目标位姿 → 关节角</td>
+      <td style="padding:0.5rem 0;">MoveIt <code>setPoseTarget</code> 内部在求 IK</td>
+    </tr>
+  </table>
+
+  <p class="cite">
+    参考：<a href="https://hades.mech.northwestern.edu/images/0/0c/MR-tablet-v2.pdf">Modern Robotics</a> Ch.4（FK）、Ch.6（IK）。
+  </p>
+
+  <h2>3. 用 OpenMANIPULATOR-X 建立直觉</h2>
+
+  <figure>
+    <svg viewBox="0 0 420 200" width="420" height="200" aria-label="四轴臂示意">
+      <!-- base -->
+      <rect x="30" y="160" width="40" height="20" fill="#666"/>
+      <text x="50" y="195" text-anchor="middle" font-size="11" font-family="sans-serif" fill="#555">link1</text>
+      <!-- joint1 rotation hint -->
+      <circle cx="50" cy="160" r="6" fill="#2563eb"/>
+      <text x="65" y="155" font-size="10" font-family="sans-serif" fill="#2563eb">joint1 (Z)</text>
+      <!-- link2 -->
+      <line x1="50" y1="160" x2="50" y2="120" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+      <text x="62" y="140" font-size="11" font-family="sans-serif" fill="#555">link2</text>
+      <!-- joint2 -->
+      <circle cx="50" cy="120" r="6" fill="#2563eb"/>
+      <text x="65" y="115" font-size="10" font-family="sans-serif" fill="#2563eb">joint2 (Y)</text>
+      <!-- link3 -->
+      <line x1="50" y1="120" x2="110" y2="80" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+      <text x="90" y="95" font-size="11" font-family="sans-serif" fill="#555">link3</text>
+      <!-- joint3 -->
+      <circle cx="110" cy="80" r="6" fill="#2563eb"/>
+      <!-- link4 -->
+      <line x1="110" y1="80" x2="170" y2="55" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+      <!-- joint4 -->
+      <circle cx="170" cy="55" r="6" fill="#2563eb"/>
+      <!-- link5 + EE -->
+      <line x1="170" y1="55" x2="230" y2="45" stroke="#333" stroke-width="8" stroke-linecap="round"/>
+      <circle cx="235" cy="44" r="8" fill="#dc2626"/>
+      <text x="235" y="30" text-anchor="middle" font-size="10" font-family="sans-serif" fill="#dc2626">End effector</text>
+      <!-- config vector -->
+      <text x="280" y="100" font-family="monospace" font-size="13" fill="#333">q = [θ₁, θ₂, θ₃, θ₄]</text>
+      <text x="280" y="125" font-family="monospace" font-size="13" fill="#333">T = FK(q)</text>
+    </svg>
+    <figcaption>侧视示意：四个旋转关节决定 End effector 在 world 中的位姿 T（位置 + 姿态）</figcaption>
+  </figure>
+
+  <p>
+    OpenMANIPULATOR-X 的 Arm 有 <strong>4 个旋转关节</strong>（<code>joint1</code>–<code>joint4</code>）。
+    把它们的角度记作向量 <strong>q</strong>，就构成了 arm 的<strong>构型（configuration）</strong>。
+  </p>
+
+  <ul>
+    <li><code>joint1</code>：绕竖直轴（Z）转——让整臂在桌面上「转身」</li>
+    <li><code>joint2</code>–<code>joint4</code>：绕水平轴（Y）转——让臂抬起、伸展、腕部微调</li>
+  </ul>
+
+  <p>
+    <strong>正运动学</strong>：已知 q = [θ₁, θ₂, θ₃, θ₄]，逐节相乘各关节的变换矩阵，得到 End effector 相对 <code>world</code> 的 4×4 位姿矩阵 T。
+  </p>
+
+  <aside>
+    <strong>四轴的关键限制：</strong>末端位姿有 6 个自由度（x, y, z + 三个旋转），但只有 4 个关节。
+    这意味着<strong>不能</strong>同时任意指定位置和完整姿态——MoveIt 有时「规划失败」，往往是目标在 kinematically 不可达，而不是 bug。
+  </aside>
+
+  <h2>4. 自测（检索练习）</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>MoveIt 的 <code>setPoseTarget(x,y,z,roll,pitch,yaw)</code> 主要在求解什么？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 正运动学：关节角 → 末端位姿</button></li>
+      <li><button type="button" data-answer="correct">B. 逆运动学：目标位姿 → 关节角</button></li>
+      <li><button type="button" data-answer="wrong">C. 动力学：计算重力补偿力矩</button></li>
+      <li><button type="button" data-answer="wrong">D. 路径规划：在障碍物间找路</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>OpenMANIPULATOR-X 的 4 个 arm 关节意味着？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 可以任意指定末端 6D 位姿</button></li>
+      <li><button type="button" data-answer="correct">B. 构型空间是 4 维，无法完全控制 6D 末端</button></li>
+      <li><button type="button" data-answer="wrong">C. 只能做关节空间运动，不能做任务空间运动</button></li>
+      <li><button type="button" data-answer="wrong">D. 不需要 URDF 就能计算 FK</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <h2>5. 下一课预告</h2>
+  <p>
+    第 2 课：<strong>正运动学怎么算</strong>——坐标系、齐次变换、逐关节「累乘」。
+    你会用手算一个简化平面 2R 臂，再对照 OpenMANIPULATOR-X 的 URDF 里 <code>&lt;origin xyz rpy&gt;</code> 的含义。
+  </p>
+
+  <aside>
+    <strong>有问题？</strong>回到 Cursor 对话，直接问你的 AI 老师——例如：「joint2 的 Y 轴正方向朝哪？」或「为什么 home 和 ready 关节角不同？」
+  </aside>
+
+  <nav class="lesson-nav">
+    下一课: <a href="0002-spatial-wrench-momentum-acceleration.html">第 2 课 · 空间六维量</a> ·
+    Mission: <a href="../MISSION.md">MISSION.md</a> ·
+    资源: <a href="../RESOURCES.md">RESOURCES.md</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。给定目标位姿，MoveIt 的 IK 求解器找一组关节角 q 使 FK(q) 接近目标。',
+      wrong: '不对。回忆表格：IK 的方向是 位姿 → 关节角。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。4 &lt; 6，所以是欠驱动臂——任务空间目标经常只能近似满足。',
+      wrong: '不对。4 关节只能控制 4 个独立量，不能任意满足全部 6D 位姿约束。'
+    });
+  </script>
+</body>
+</html>

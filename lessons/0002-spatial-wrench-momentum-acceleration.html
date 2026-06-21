@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 2 课：Wrench、Spatial Momentum、Spatial Acceleration</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+  <p class="meta">第 2 课 · 空间六维量 · 约 12 分钟 ·
+    <a href="0001-what-is-robot-kinematics.html">← 第 1 课</a>
+  </p>
+
+  <h1>Wrench、Spatial Momentum、Spatial Acceleration</h1>
+
+  <p class="lead">
+    刚体在三维空间里，「转」和「平移」总是成对出现。
+    运动学用 6 维 <strong>Twist</strong> 描述速度；动力学用三个对应的 6 维量描述
+    <strong>力、动量、加速度</strong>——它们共享同一套几何语言。
+  </p>
+
+  <h2>1. 为什么需要 6 维？</h2>
+
+  <p>
+    一个刚体有 6 个运动自由度（3 转 + 3 平移）。
+    只写 3 个力或 3 个力矩，无法完整描述作用在刚体上的「广义力」，
+    也无法与 6 维速度做<strong>功率</strong>配对。
+  </p>
+
+  <aside>
+    <strong>与 OpenMANIPULATOR-X 的联系：</strong>
+    夹爪抓取时，物体对指尖既有<strong>力</strong>（拉/推）也有<strong>力矩</strong>（扭转）。
+    末端受到的完整力学状态就是一个 Wrench；经 Jacobian 转置映射到关节力矩。
+  </aside>
+
+  <p class="cite">
+    参考：<a href="https://hades.mech.northwestern.edu/images/0/0c/MR-tablet-v2.pdf">Modern Robotics</a>
+    Ch.3（刚体运动）、Ch.5 §5.3（Statics / Wrench）、Ch.8（Spatial momentum 与 Newton-Euler）。
+  </p>
+
+  <h2>2. Wrench（空间力 / 广义力）</h2>
+
+  <p>
+    <strong>Wrench</strong> 是 6 维向量，记作 <span class="mono">F = (m, f)</span>：
+  </p>
+
+  <ul>
+    <li><strong>m</strong>（3 维）：力矩 / torque，单位 N·m</li>
+    <li><strong>f</strong>（3 维）：力 / force，单位 N</li>
+  </ul>
+
+  <p>
+    二者必须在<strong>同一参考系、同一点</strong>下表达（通常是某 link 坐标系原点）。
+    换参考点或换坐标系时，Wrench 要按刚体几何规则变换——不能直接把 3 个力与 3 个力矩分开随便加。
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 400 160" width="400" height="160" aria-label="Wrench 示意">
+      <rect x="120" y="50" width="160" height="60" fill="#ddd" stroke="#333"/>
+      <text x="200" y="85" text-anchor="middle" font-size="12" font-family="sans-serif">刚体 / link5</text>
+      <!-- force -->
+      <line x1="200" y1="110" x2="200" y2="145" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+      <text x="215" y="140" font-size="11" fill="#2563eb" font-family="sans-serif">f</text>
+      <!-- torque arc -->
+      <path d="M 260 80 A 25 25 0 0 1 235 55" fill="none" stroke="#dc2626" stroke-width="2"/>
+      <text x="265" y="70" font-size="11" fill="#dc2626" font-family="sans-serif">m</text>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6" fill="#2563eb"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>Wrench = 作用在刚体上的力矩 m 与力 f 的组合（同参考系、同一点）</figcaption>
+  </figure>
+
+  <p>
+    与 <strong>Twist</strong>（空间速度）<span class="mono">V = (ω, v)</span> 配对：
+  </p>
+
+  <p style="text-align:center; font-family:monospace; font-size:1.1rem;">
+    功率 P = m·ω + f·v = F<sup>T</sup>V
+  </p>
+
+  <p>
+    直觉：转轴上的力矩 × 角速度 + 力 × 线速度 = 瞬时功率。
+    静力学里 Wrench 平衡（各关节/各 link 合力矩为零）是抓取、持重分析的基础。
+  </p>
+
+  <h2>3. Spatial Momentum（空间动量）</h2>
+
+  <p>
+    <strong>Spatial momentum</strong> 是 6 维向量，记作 <span class="mono">P = (n, h)</span>：
+  </p>
+
+  <ul>
+    <li><strong>n</strong>（3 维）：关于参考系原点的<strong>角动量</strong>（kg·m²/s）</li>
+    <li><strong>h</strong>（3 维）：<strong>线动量</strong>（kg·m/s）</li>
+  </ul>
+
+  <p>
+    对单个质点，线动量 h = mv  familiar；
+    对刚体，还要把「绕参考点旋转」的角动量 n 一起打包。
+    与 Wrench 的关系对应 Newton 第二定律的 6 维推广：
+  </p>
+
+  <aside>
+    <strong>Spatial momentum 的时间变化 ≠ 只写 F。</strong>
+    在旋转/平移的参考系里，P 的导数还要加上「坐标系运动带来的项」
+    （与 Spatial acceleration 里出现 ω×v 是同一类几何效应）。
+    完整式：<span class="mono">F = dP/dt + ad<sub>V</sub><sup>T</sup>(P)</span>（Modern Robotics 空间 Newton-Euler）。
+  </aside>
+
+  <p>
+    对 OpenMANIPULATOR-X：Arm 各 link 绕关节旋转时，每个 link 都有自己的 spatial momentum；
+    重力补偿控制器本质上在抵消重力 Wrench，使关节处净 Wrench 平衡，Arm 才能「悬停」。
+  </p>
+
+  <h2>4. Spatial Acceleration（空间加速度）</h2>
+
+  <p>
+    最容易踩坑的一点：<strong>Spatial acceleration 不是把角加速度和线加速度简单拼成 6 个数。</strong>
+  </p>
+
+  <p>
+    记 Twist <span class="mono">V = (ω, v)</span>，Spatial acceleration <span class="mono">A = (α, a)</span>。
+    在<strong>随刚体运动的 body frame</strong> 中：
+  </p>
+
+  <p style="text-align:center; font-family:monospace;">
+    α = dω/dt<br>
+    a = dv/dt + ω × v
+  </p>
+
+  <p>
+    第二行多出的 <strong>ω × v</strong> 来自：body frame 本身在转、在动，
+    你在 frame 里看到的「坐标变化」不等于惯性系里的真实线加速度。
+    若刚体纯平移、不转（ω=0），则 a = dv/dt，回到中学物理。
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 420 120" width="420" height="120" aria-label="对比">
+      <text x="10" y="30" font-size="12" font-family="sans-serif" fill="#555">错误理解</text>
+      <text x="10" y="55" font-family="monospace" font-size="13">A = (dω/dt, dv/dt)</text>
+      <text x="10" y="90" font-size="12" font-family="sans-serif" fill="#555">空间加速度（body frame）</text>
+      <text x="10" y="115" font-family="monospace" font-size="13">A = (dω/dt, dv/dt + ω×v)</text>
+      <line x1="280" y1="10" x2="280" y2="110" stroke="#ccc"/>
+      <text x="300" y="55" font-size="11" fill="#dc2626" font-family="sans-serif">缺 ω×v →</text>
+      <text x="300" y="75" font-size="11" fill="#dc2626" font-family="sans-serif">FK/IK 速度</text>
+      <text x="300" y="95" font-size="11" fill="#dc2626" font-family="sans-serif">链式求导错</text>
+    </svg>
+    <figcaption>Spatial acceleration 的线加速度分量必须含 ω×v 修正项</figcaption>
+  </figure>
+
+  <h2>5. 三者对照表</h2>
+
+  <table style="width:100%; border-collapse:collapse; font-family:var(--font-sans); font-size:0.88rem;">
+    <tr style="border-bottom:2px solid var(--border);">
+      <th style="text-align:left; padding:0.4rem;">名称</th>
+      <th style="text-align:left; padding:0.4rem;">符号</th>
+      <th style="text-align:left; padding:0.4rem;">上 3 维</th>
+      <th style="text-align:left; padding:0.4rem;">下 3 维</th>
+      <th style="text-align:left; padding:0.4rem;">与 Twist 关系</th>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;">Twist（速度）</td>
+      <td style="padding:0.4rem;">V</td>
+      <td style="padding:0.4rem;">ω</td>
+      <td style="padding:0.4rem;">v</td>
+      <td style="padding:0.4rem;">—</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;"><strong>Wrench</strong></td>
+      <td style="padding:0.4rem;">F</td>
+      <td style="padding:0.4rem;">m（力矩）</td>
+      <td style="padding:0.4rem;">f（力）</td>
+      <td style="padding:0.4rem;">功率共轭：F<sup>T</sup>V</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;"><strong>Spatial momentum</strong></td>
+      <td style="padding:0.4rem;">P</td>
+      <td style="padding:0.4rem;">n（角动量）</td>
+      <td style="padding:0.4rem;">h（线动量）</td>
+      <td style="padding:0.4rem;">F = dP/dt + …（动力学）</td>
+    </tr>
+    <tr>
+      <td style="padding:0.4rem;"><strong>Spatial acceleration</strong></td>
+      <td style="padding:0.4rem;">A</td>
+      <td style="padding:0.4rem;">α = dω/dt</td>
+      <td style="padding:0.4rem;">a = dv/dt + ω×v</td>
+      <td style="padding:0.4rem;">A 来自 V 的正确时间导数</td>
+    </tr>
+  </table>
+
+  <p style="margin-top:1rem;">
+    速查：<a href="../reference/spatial-six-vectors.html">reference/spatial-six-vectors.html</a>
+  </p>
+
+  <h2>6. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>与 Twist 做功率配对、且含力矩与力的 6 维量是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 空间动量 P，角动量与线动量</button></li>
+      <li><button type="button" data-answer="correct">B. 空间力 F，力矩与力组合量</button></li>
+      <li><button type="button" data-answer="wrong">C. 空间加速度 A，角与线加速度</button></li>
+      <li><button type="button" data-answer="wrong">D. 关节向量 q，四个关节角标量</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>Body frame 下 spatial acceleration 线部分 a 等于？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 仅 dv/dt，线速度对时间求导</button></li>
+      <li><button type="button" data-answer="correct">B. dv/dt 加 ω 叉乘 v 修正项</button></li>
+      <li><button type="button" data-answer="wrong">C. 仅 ω 叉乘 v，不含 dv/dt 项</button></li>
+      <li><button type="button" data-answer="wrong">D. 末端 FK 对 q 求二阶偏导数值</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>Spatial momentum P 的上、下 3 维通常分别是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="correct">A. 角动量 n 与线动量 h 组合量</button></li>
+      <li><button type="button" data-answer="wrong">B. 力矩 m 与线动量 h 组合量</button></li>
+      <li><button type="button" data-answer="wrong">C. 角速度 ω 与线速度 v 组合量</button></li>
+      <li><button type="button" data-answer="wrong">D. 角加速度 α 与力 f 组合量</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>7. 下一课预告</h2>
+  <p>
+    第 3 课回到运动学主线：<strong>坐标系与齐次变换</strong>（或你可选
+    <strong>Wrench 与 Jacobian 转置</strong>：τ = J<sup>T</sup>F 为何成立）。
+    在对话里告诉我你更想先学哪条。
+  </p>
+
+  <aside>
+    <strong>有问题？</strong>回到 Cursor 问老师——例如：「End effector 上的 Wrench 怎么变到 joint1 力矩？」
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0001-what-is-robot-kinematics.html">第 1 课</a> ·
+    <a href="../reference/spatial-six-vectors.html">速查表</a> ·
+    <a href="../GLOSSARY.md">GLOSSARY</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。Wrench F=(m,f) 与 Twist V 共轭，功率 P=F^T V。',
+      wrong: '不对。与速度配对做功率的是 Wrench（力矩+力），不是动量或加速度。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。body frame 里 a = dv/dt + ω×v，缺一项就不是 spatial acceleration。',
+      wrong: '不对。仅 dv/dt 忽略了随体坐标系旋转带来的 ω×v 项。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。P=(n,h)，n 为角动量，h 为线动量，均在同一参考系下表达。',
+      wrong: '不对。Spatial momentum 是角动量与线动量的 6 维组合，不是力或速度。'
+    });
+  </script>
+</body>
+</html>

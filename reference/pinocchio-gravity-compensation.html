@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：Pinocchio 重力补偿</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 38rem; }
+    pre { font-size: 0.8rem; overflow-x: auto; background: #eee; padding: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    th, td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta"><a href="../lessons/0003-pinocchio-gravity-compensation.html">← 第 3 课</a></p>
+  <h1>Pinocchio 重力补偿速查</h1>
+
+  <h2>核心公式</h2>
+  <p style="text-align:center;font-family:monospace;">静止平衡：τ = g(q)</p>
+
+  <h2>最小 C++</h2>
+  <pre>pinocchio::urdf::buildModel(urdf, model);
+pinocchio::Data data(model);
+pinocchio::computeGeneralizedGravity(model, data, q);
+// τ_g ← data.g</pre>
+
+  <h2>最小 Python</h2>
+  <pre>model = pin.buildModelFromUrdf(urdf)
+data = model.createData()
+g = pin.computeGeneralizedGravity(model, data, q)</pre>
+
+  <h2>对照 ROBOTIS KDL</h2>
+  <table>
+    <tr><th>KDL</th><th>Pinocchio</th></tr>
+    <tr><td>JntToGravity(q, G)</td><td>computeGeneralizedGravity → data.g</td></tr>
+    <tr><td>ChainDynParam(chain, g_vec)</td><td>buildModel(urdf) + model.gravity</td></tr>
+    <tr><td>effort_joint.setCommand(G(i))</td><td>effort command interface ← g(i)</td></tr>
+  </table>
+
+  <h2>实机 checklist</h2>
+  <ul>
+    <li>☐ Dynamixel effort/current 模式</li>
+    <li>☐ ros2_control effort command interface</li>
+    <li>☐ URDF 惯性参数可信</li>
+    <li>☐ g(q) 符号与幅度小步验证</li>
+    <li>☐ 只补偿 arm 四关节（排除 gripper 若未建模为 effort）</li>
+  </ul>
+
+  <p class="cite">
+    <a href="https://github.com/ROBOTIS-GIT/open_manipulator_controls">open_manipulator_controls</a> ·
+    <a href="https://docs.ros.org/en/humble/p/pinocchio/generated/function_namespacepinocchio_1a79736c0fe06fdd6fc64ab02be0503785.html">computeGeneralizedGravity</a>
+  </p>
+
+</body>
+</html>

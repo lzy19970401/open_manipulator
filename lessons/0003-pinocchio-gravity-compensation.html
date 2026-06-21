@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 3 课：Pinocchio 重力补偿</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+  <p class="meta">第 3 课 · Pinocchio · 约 15 分钟 ·
+    <a href="0002-spatial-wrench-momentum-acceleration.html">← 第 2 课</a>
+  </p>
+
+  <h1>用 Pinocchio 实现 OpenMANIPULATOR 重力补偿</h1>
+
+  <p class="lead">
+    目标：给定当前关节角 q，算出 <strong>g(q)</strong>，在关节力矩接口上施加 τ = g(q)，
+    让机械臂在重力下近似「失重」——与
+    <a href="https://github.com/ROBOTIS-GIT/open_manipulator_controls">ROBOTIS open_manipulator_controls</a>
+    的 KDL 版同一物理问题，换 Pinocchio 实现。
+  </p>
+
+  <h2>1. 物理问题：你在补偿什么？</h2>
+
+  <p>
+    拉格朗日动力学：
+    <span class="mono">M(q)q̈ + c(q,q̇) + g(q) = τ</span>
+  </p>
+  <p>
+    静止、不加速时（q̈ = 0, q̇ = 0）：<strong>τ = g(q)</strong> 即可平衡重力。
+    这里的 <strong>g(q)</strong> 就是 <em>generalized gravity</em>——每个关节为抵抗重力所需力矩。
+  </p>
+
+  <aside>
+    与第 2 课联系：重力在各 link 上产生 Wrench；Pinocchio 在 URDF 惯性参数上递归算出等效的 g(q)。
+  </aside>
+
+  <h2>2. ROBOTIS 参考实现（KDL，ROS1）</h2>
+
+  <p>
+    <a href="https://github.com/ROBOTIS-GIT/open_manipulator_controls">open_manipulator_controls</a>
+    中控制环极简（概念层）：
+  </p>
+
+  <ol>
+    <li>从 URDF 建 KDL chain（<code>root_link</code> → <code>tip_link</code>）</li>
+    <li>读当前关节位置 q</li>
+    <li><code>ChainDynParam::JntToGravity(q, G)</code></li>
+    <li><code>effort_joint_handle.setCommand(G(i))</code></li>
+  </ol>
+
+  <p>
+    前置条件（README）：
+    <strong>EffortJointInterface</strong>、仿真时 transmission 设为 effort、电机 current 模式。
+    Launch：<code>gravity_compensation_controller.launch sim:=false</code>
+  </p>
+
+  <aside>
+    你当前 ROS 2 仓库里的 <code>om_gravity_compensation_controller</code> 用 KDL <em>完整 RNEA</em>，
+    还含摩擦补偿、leader 同步——比 ROBOTIS 参考版复杂。本课先掌握「纯 g(q)」核心。
+  </aside>
+
+  <h2>3. Pinocchio 等价 API</h2>
+
+  <p>
+    Pinocchio 提供专用函数（见
+    <a href="https://docs.ros.org/en/humble/p/pinocchio/generated/function_namespacepinocchio_1a79736c0fe06fdd6fc64ab02be0503785.html">文档</a>）：
+  </p>
+
+  <pre><code>#include &lt;pinocchio/parsers/urdf.hpp&gt;
+#include &lt;pinocchio/algorithm/rnea.hpp&gt;
+
+pinocchio::Model model;
+pinocchio::urdf::buildModel("open_manipulator_x.urdf", model);
+pinocchio::Data data(model);
+
+Eigen::VectorXd q(model.nq);   // 当前关节构型
+// ... 从 /joint_states 填入 q ...
+
+pinocchio::computeGeneralizedGravity(model, data, q);
+Eigen::VectorXd tau_g = data.g;   // τ = g(q)
+
+// 等价写法（v=0, a=0 的 RNEA）：
+pinocchio::rnea(model, data, q,
+  Eigen::VectorXd::Zero(model.nv),
+  Eigen::VectorXd::Zero(model.nv));
+// data.tau == data.g</code></pre>
+
+  <p>
+    默认重力：<code>model.gravity.linear() = (0, 0, -9.81)</code>，与 KDL 里
+    <code>KDL::Vector(0,0,-9.81)</code> 一致。
+  </p>
+
+  <h2>4. 控制环（Pinocchio 版）</h2>
+
+  <figure>
+    <svg viewBox="0 0 480 100" width="480" height="100" aria-label="控制环">
+      <rect x="10" y="35" width="70" height="30" fill="#eee" stroke="#333"/>
+      <text x="45" y="55" text-anchor="middle" font-size="10" font-family="sans-serif">URDF</text>
+      <rect x="100" y="35" width="90" height="30" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="145" y="55" text-anchor="middle" font-size="10" font-family="sans-serif">Pinocchio Model</text>
+      <rect x="210" y="35" width="80" height="30" fill="#eee" stroke="#333"/>
+      <text x="250" y="55" text-anchor="middle" font-size="10" font-family="sans-serif">q ← states</text>
+      <rect x="310" y="35" width="100" height="30" fill="#dcfce7" stroke="#15803d"/>
+      <text x="360" y="50" text-anchor="middle" font-size="9" font-family="sans-serif">computeGeneralized</text>
+      <text x="360" y="62" text-anchor="middle" font-size="9" font-family="sans-serif">Gravity → g</text>
+      <rect x="430" y="35" width="40" height="30" fill="#fee2e2" stroke="#dc2626"/>
+      <text x="450" y="55" text-anchor="middle" font-size="10" font-family="sans-serif">τ→effort</text>
+      <line x1="80" y1="50" x2="100" y2="50" stroke="#333" marker-end="url(#arr)"/>
+      <line x1="190" y1="50" x2="210" y2="50" stroke="#333"/>
+      <line x1="290" y1="50" x2="310" y2="50" stroke="#333"/>
+      <line x1="410" y1="50" x2="430" y2="50" stroke="#333"/>
+      <defs><marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#333"/></marker></defs>
+    </svg>
+    <figcaption>每个控制周期：读 q → Pinocchio 算 g(q) → 写 effort 命令</figcaption>
+  </figure>
+
+  <h2>5. 动手：独立示例（不改机器人包）</h2>
+
+  <p>仓库根目录 <code>teaching-examples/</code>：</p>
+
+  <table style="width:100%; border-collapse:collapse; font-family:var(--font-sans); font-size:0.88rem;">
+    <tr style="border-bottom:1px solid var(--border);">
+      <th style="text-align:left; padding:0.4rem;">文件</th>
+      <th style="text-align:left; padding:0.4rem;">用法</th>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;"><code>pinocchio_gravity_comp.py</code></td>
+      <td style="padding:0.4rem;"><code>python3 teaching-examples/pinocchio_gravity_comp.py [urdf] [q1 q2 q3 q4]</code></td>
+    </tr>
+    <tr>
+      <td style="padding:0.4rem;"><code>pinocchio_gravity_comp.cpp</code></td>
+      <td style="padding:0.4rem;">见文件头 g++ 编译命令</td>
+    </tr>
+  </table>
+
+  <p>安装 Pinocchio（ROS 2 Humble 示例）：</p>
+  <pre><code>sudo apt install ros-humble-pinocchio</code></pre>
+
+  <h2>6. 常见坑</h2>
+
+  <ul>
+    <li><strong>nq / nv 与 arm 四关节</strong>：URDF 含 gripper、mimic 时 model.nv 可能 &gt; 4；应对照 Pinocchio 打印的 joint 名，只补偿 arm 对应索引。</li>
+    <li><strong>符号</strong>：g(q) 与 Dynamixel 力矩正方向可能差负号；实机需小力矩阶跃校准。</li>
+    <li><strong>接口</strong>：当前 OMX 默认 <code>open_manipulator_x_position</code> 是位置模式；重力补偿需 <strong>effort/current 模式</strong> 与对应 ros2_control 插件（参考 ROBOTIS README）。</li>
+    <li><strong>URDF 惯性</strong>：g(q) 完全依赖 link 的 mass/inertia；mesh 不对但 inertia 对即可。</li>
+  </ul>
+
+  <h2>7. KDL vs Pinocchio 对照</h2>
+
+  <table style="width:100%; border-collapse:collapse; font-family:var(--font-sans); font-size:0.85rem;">
+    <tr style="border-bottom:2px solid var(--border);">
+      <th style="padding:0.4rem;">步骤</th>
+      <th style="padding:0.4rem;">KDL（ROBOTIS）</th>
+      <th style="padding:0.4rem;">Pinocchio</th>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;">建模型</td>
+      <td style="padding:0.4rem;">kdl_parser + chain</td>
+      <td style="padding:0.4rem;">urdf::buildModel</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.4rem;">算 g(q)</td>
+      <td style="padding:0.4rem;">JntToGravity</td>
+      <td style="padding:0.4rem;">computeGeneralizedGravity</td>
+    </tr>
+    <tr>
+      <td style="padding:0.4rem;">输出</td>
+      <td style="padding:0.4rem;">KDL::JntArray G</td>
+      <td style="padding:0.4rem;">data.g (Eigen)</td>
+    </tr>
+  </table>
+
+  <h2>8. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>静止悬停时，理想重力补偿应施加的关节力矩是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="correct">A. τ = g(q)，广义重力向量对应值</button></li>
+      <li><button type="button" data-answer="wrong">B. τ = M(q)q̈，惯性矩阵乘加速度项</button></li>
+      <li><button type="button" data-answer="wrong">C. τ = c(q,q̇)，科氏与离心项组合量</button></li>
+      <li><button type="button" data-answer="wrong">D. τ = 0，关闭所有电机力矩输出</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>Pinocchio 中 computeGeneralizedGravity 等价于？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. rnea(model,data,q,v,a) 任意 v 与 a</button></li>
+      <li><button type="button" data-answer="correct">B. rnea(model,data,q,0,0) 零速零加速度</button></li>
+      <li><button type="button" data-answer="wrong">C. forwardKinematics 仅正运动学计算</button></li>
+      <li><button type="button" data-answer="wrong">D. computeJointJacobian 速度雅可比矩阵</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <h2>9. 下一课</h2>
+  <p>
+    可选 A：把 Pinocchio 嵌入 <strong>ros2_control 控制器</strong>（生命周期、effort 接口、参数）。
+    可选 B：用 Pinocchio 对比 KDL 的 g(q) 数值，调试 URDF 惯性。
+  </p>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「帮我跑 teaching-examples 并解释 g(q) 符号」或「effort 模式要改哪些 xacro？」
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0004-dynamics-libraries-comparison.html">第 4 课 · 库对比</a> ·
+    <a href="../reference/pinocchio-gravity-compensation.html">速查</a> ·
+    <a href="../teaching-examples/pinocchio_gravity_comp.py">Python 示例</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。静止时 q̇=q̈=0，动力学只剩 τ=g(q)。',
+      wrong: '不对。M(q)q̈ 和 c 在静止为零；τ=0 无法抵抗重力。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。官方文档：computeGeneralizedGravity ≡ rnea(q,0,0)。',
+      wrong: '不对。只有 v=a=0 时 RNEA 才等于纯重力项 g(q)。'
+    });
+  </script>
+</body>
+</html>

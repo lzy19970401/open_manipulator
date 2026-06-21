@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：空间六维量</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 36rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    th, td { border: 1px solid var(--border); padding: 0.45rem 0.6rem; text-align: left; }
+    th { background: #eee; }
+    .formula { font-family: monospace; text-align: center; margin: 1rem 0; font-size: 1rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">Reference · 打印友好 ·
+    <a href="../lessons/0002-spatial-wrench-momentum-acceleration.html">第 2 课</a>
+  </p>
+
+  <h1>空间六维量速查</h1>
+
+  <p class="lead">Modern Robotics 约定。所有量须在<strong>同一参考系、同一点</strong>表达。</p>
+
+  <table>
+    <tr>
+      <th>量</th>
+      <th>符号</th>
+      <th>上 3 维</th>
+      <th>下 3 维</th>
+    </tr>
+    <tr>
+      <td>Twist（速度）</td>
+      <td>V</td>
+      <td>ω</td>
+      <td>v</td>
+    </tr>
+    <tr>
+      <td><strong>Wrench</strong></td>
+      <td>F</td>
+      <td>m（力矩, N·m）</td>
+      <td>f（力, N）</td>
+    </tr>
+    <tr>
+      <td><strong>Spatial momentum</strong></td>
+      <td>P</td>
+      <td>n（角动量）</td>
+      <td>h（线动量）</td>
+    </tr>
+    <tr>
+      <td><strong>Spatial acceleration</strong></td>
+      <td>A</td>
+      <td>α = dω/dt</td>
+      <td>a = dv/dt + ω×v</td>
+    </tr>
+  </table>
+
+  <h2>关键公式</h2>
+
+  <p class="formula">功率 &nbsp; P = m·ω + f·v = F<sup>T</sup>V</p>
+  <p class="formula">静力映射 &nbsp; τ = J<sup>T</sup> F &nbsp;（关节力矩 ← 末端 Wrench）</p>
+  <p class="formula">空间 Newton-Euler &nbsp; F = dP/dt + ad<sub>V</sub><sup>T</sup>(P)</p>
+
+  <h2>常见错误</h2>
+  <ul>
+    <li>把 Wrench 当成「只有 3 个力」— 漏掉力矩 m</li>
+    <li>Spatial acceleration 写成 (dω/dt, dv/dt) — 漏 ω×v</li>
+    <li>换参考点时不变换 Wrench — m 与 f 必须一起变</li>
+  </ul>
+
+  <p class="cite">
+    来源：<a href="https://hades.mech.northwestern.edu/images/0/0c/MR-tablet-v2.pdf">Modern Robotics</a> Ch.3, 5, 8
+  </p>
+
+</body>
+</html>
