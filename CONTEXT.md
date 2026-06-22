@@ -76,6 +76,14 @@ _Avoid_: hand group, tool group
 机器人所处的三类互斥运行情境之一：**Hardware**（经串口驱动真实 Dynamixel 舵机）、**Simulation**（Gazebo 仿真，无物理连接）、**Mock hardware**（软件回环，命令被镜像为状态，无真实或仿真物理）。
 _Avoid_: real vs fake, sim flag
 
+**Standard control launch（标准控制 launch）**:
+通过 `open_manipulator_x.launch.py` 启动的默认配置：`open_manipulator_x_position` ros2_control、`arm_controller` + `gripper_controller` 位置控制，用于 MoveIt / 轨迹执行。
+_Avoid_: normal mode, position launch（未与 GC launch 区分时）
+
+**Gravity compensation control mode（重力补偿控制模式）**:
+通过独立 launch 启动的互斥配置：Arm 四关节（`joint1`–`joint4`）走 **effort** 接口，控制器前馈 τ≈g(q)，使 Arm 近似反驱动、可用手示教；**不含**轨迹录制；退出时 effort 清零并 **Torque disable**。与 Standard control launch 二选一，不可同时加载。操作说明见 [docs/open-manipulator-x-gravity-compensation.md](docs/open-manipulator-x-gravity-compensation.md)。
+_Avoid_: GC mode（未限定型号时）、leader mode（OMX 无 follower 同步）
+
 **Torque enable（力矩使能）**:
 Dynamixel 舵机是否输出 holding torque 的安全开关；禁用时关节可手动拖动，启用时执行位置/电流控制。
 _Avoid_: motor on/off, power
@@ -93,3 +101,37 @@ _Avoid_: mode 3（寄存器编号）
 **Current-based position control mode（电流限制位置控制模式）**:
 Master finger（ID 15）的工作模式：在位置控制基础上以 Goal Current 限制夹持力，用于抓取时防止过夹或滑脱。
 _Avoid_: mode 5, force control（本机并非纯力控）
+
+## 参数辨识
+
+**System identification（系统辨识）**:
+通过受控激励与测量，从实测数据估计机器人动力学模型参数的过程；本仓库 Phase 1 仅覆盖 **Arm** 四关节（`joint1`–`joint4`），不含 **Gripper**。
+_Avoid_: calibration（未区分 kinematic/dynamic 时）、parameter tuning（指控制器增益时）
+
+**Nominal dynamics model（名义动力学模型）**:
+由官方 URDF 惯性参数与运动学链构成的理想模型，作为辨识对照基准与下游控制的默认来源。
+_Avoid_: CAD model, ideal model（未强调是 URDF 来源时）
+
+**Calibrated dynamics model（标定动力学模型）**:
+在名义模型基础上，经辨识或单关节实验修正后的模型；参数存放在独立配置文件中，不覆盖 URDF 或现有 GC yaml。
+_Avoid_: identified URDF, tuned yaml
+
+**Base inertial parameters（BIP，最小惯性参数集）**:
+经符号重组后线性独立、可辨识的等效惯性参数组合（如 `m_i c_{ix}`、`I_{xx,i}-I_{yy,i}`），而非各连杆独立的 10 个惯性参数。
+_Avoid_: link inertia, URDF inertial（指原始 per-link 参数时）
+
+**Excitation trajectory（激励轨迹）**:
+为充分激励动力学而设计的关节空间参考轨迹，常用多频傅里叶级数以保证各参数可观测。
+_Avoid_: test motion, random move
+
+**Identification dataset（辨识数据集）**:
+单次或多次激励实验同步记录的 `(q, q̇, q̈, τ)` 时间序列及元数据（采样率、关节范围、实验编号）。
+_Avoid_: bag, log（未强调是辨识用途时）
+
+**Viscous friction coefficient（粘滞摩擦系数 Fv）**:
+与关节角速度成正比的摩擦项系数，线性模型中为 `τ_f = Fv · q̇`。
+_Avoid_: damping, B（未区分 URDF `<dynamics>` 阻尼时）
+
+**Coulomb friction coefficient（库仑摩擦系数 Fc）**:
+与运动方向有关的常值干摩擦系数，线性模型中为 `τ_f = Fc · sign(q̇)`。
+_Avoid_: static friction（未区分 stiction 模型时）
