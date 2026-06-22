@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 6 课：OMX 参数辨识 — 傅里叶激励轨迹</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #7c3aed; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .theory { background: #faf5ff; border-left-color: #7c3aed; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 6 课 · Issue 01 代码走读 · 约 18 分钟 ·
+    <a href="0005-omx-gravity-compensation-implementation.html">← 第 5 课</a> ·
+    <a href="../reference/sysid-excitation-trajectory.html">速查表</a>
+  </p>
+
+  <h1>OpenMANIPULATOR-X 参数辨识：傅里叶激励轨迹（Issue 01）</h1>
+
+  <p class="lead">
+    第 5 课走读了<strong>重力补偿</strong>——已知 URDF 模型，算 g(q) 并前馈。
+    本课进入 <strong>System identification</strong> 流水线的第一步：
+    设计<strong>激励轨迹</strong> q(t)，使后续录到的 (q, q̇, q̈, τ) 能线性回归出 BIP 与摩擦参数。
+    对照仓库包 <code class="file">open_manipulator_sysid</code> 与
+    <code class="file">excitation_trajectory.py</code>，把<strong>理论公式 ↔ 代码流程</strong>一一对应。
+  </p>
+
+  <aside class="theory">
+    <strong>与 MISSION 的关系：</strong>重力补偿假设「模型已知」；参数辨识回答「模型里哪些数还不准、如何用实验估出来」。
+    独立包 <code>open_manipulator_sysid</code> 不修改 GC / bringup yaml（见
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a>）。
+  </aside>
+
+  <h2>1. 为什么要「激励轨迹」？</h2>
+
+  <p>完整关节动力学可写成：</p>
+  <pre>M(q) q̈ + C(q,q̇) q̇ + G(q) + F(q̇) = τ</pre>
+
+  <p>离线辨识的核心技巧：把上式整理成<strong>线性回归</strong></p>
+  <pre>Y(q, q̇, q̈) · π = τ</pre>
+
+  <p>其中 π 堆叠 <strong>BIP</strong>（最小惯性参数）与 <strong>Fv、Fc</strong>（摩擦系数）。
+  若 q(t) 运动贫乏（例如一直停在 q₀），Y 的列高度相关 → 参数不可辨识。
+  工业常用<strong>多频傅里叶</strong>轨迹，使各 regressor 列被<strong>持续激励</strong>（persistent excitation）。
+  <span class="cite">主参考：Swevers et al., <em>Robotica</em> 1997 — optimal robot excitation for parameter identification.</span></p>
+
+  <h2>2. 理论：多频傅里叶 q(t)</h2>
+
+  <p>对 Arm 每个关节 j（本包仅 joint1–4）：</p>
+  <pre>q_j(t) = q₀_j + Σ_{k=1}^{N} a_{jk} sin(k ω₀ t + φ_{jk})
+ω₀ = 2π / T</pre>
+
+  <p>对时间求导（链式法则，代码里逐项累加）：</p>
+  <pre>q̇_j  = Σ a_{jk} · k ω₀ · cos(k ω₀ t + φ_{jk})
+q̈_j  = −Σ a_{jk} · (k ω₀)² · sin(k ω₀ t + φ_{jk})</pre>
+
+  <p>Phase 1 默认（<code>config/excitation.yaml</code>）：N=5，T=10 s，q₀ 为各关节<strong>硬限位中点</strong>，
+  总位置幅值 = 限位行程的 30%，再按 1/k 分给各谐波；φ=0 使 t=0 时 sin=0 → <strong>q(0)=q₀</strong>。</p>
+
+  <figure>
+    <svg viewBox="0 0 480 100" width="480" height="100" aria-label="单关节傅里叶叠加">
+      <text x="240" y="14" text-anchor="middle" font-size="10" fill="#666" font-family="sans-serif">joint2 示意：q₀ + 5 个正弦谐波叠加</text>
+      <path d="M 20 70 Q 80 30, 140 70 T 260 70 T 380 70 T 460 70" fill="none" stroke="#7c3aed" stroke-width="2"/>
+      <line x1="20" y1="50" x2="460" y2="50" stroke="#999" stroke-dasharray="4"/>
+      <text x="22" y="48" font-size="8" fill="#666" font-family="sans-serif">q₀</text>
+      <text x="460" y="88" font-size="8" fill="#666" font-family="sans-serif">t →</text>
+    </svg>
+    <figcaption>多频叠加后 q(t) 在 q₀ 附近周期运动；幅值与 ω 决定 q̇、q̈ 峰值</figcaption>
+  </figure>
+
+  <h2>3. 代码总览：从 yaml 到 sample(t)</h2>
+
+  <table class="flow">
+    <tr>
+      <th>步骤</th>
+      <th>函数 / 文件</th>
+      <th>做什么</th>
+    </tr>
+    <tr>
+      <td><span class="step-num">1</span> 读配置</td>
+      <td><code>from_yaml()</code> → <code>__init__()</code></td>
+      <td>解析关节列表、限位、q₀、N/T、安全上限</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">2</span> 算限位</td>
+      <td><code>__init__</code> 内循环</td>
+      <td>硬限位 → 软限位（内缩 10%）→ 存 <code>JointSafetyLimits</code></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">3</span> 分配谐波幅值</td>
+      <td><code>_build_harmonics()</code></td>
+      <td>每关节总幅值 × 1/k 权重 → 未缩放 a<sub>jk</sub></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">4</span> 安全缩放</td>
+      <td><code>_compute_amplitude_scale()</code></td>
+      <td>统一系数 s，使位置/速度/加速度解析上界不超限</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">5</span> 求 q,q̇,q̈</td>
+      <td><code>sample(t)</code> → <code>_joint_kinematics()</code></td>
+      <td>四关节各自傅里叶求和，返回 <code>TrajectorySample</code></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">6</span> 校验</td>
+      <td><code>validate_period()</code></td>
+      <td>一个周期内密采样；超限 → <code>SafetyViolation</code></td>
+    </tr>
+  </table>
+
+  <figure>
+    <svg viewBox="0 0 520 130" width="520" height="130" aria-label="ExcitationTrajectory 数据流">
+      <rect x="10" y="40" width="95" height="40" fill="#f3f4f6" stroke="#333"/>
+      <text x="57" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">excitation.yaml</text>
+      <text x="57" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">q0, N, T, caps</text>
+      <rect x="130" y="40" width="110" height="40" fill="#ede9fe" stroke="#7c3aed"/>
+      <text x="185" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">ExcitationTrajectory</text>
+      <text x="185" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">__init__ + scale</text>
+      <rect x="265" y="40" width="75" height="40" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="302" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">sample(t)</text>
+      <text x="302" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">q, q̇, q̈</text>
+      <rect x="365" y="40" width="70" height="40" fill="#dcfce7" stroke="#15803d"/>
+      <text x="400" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">validate</text>
+      <text x="400" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">软限位/速度</text>
+      <rect x="455" y="40" width="55" height="40" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="482" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">CLI</text>
+      <text x="482" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">print</text>
+      <line x1="105" y1="60" x2="130" y2="60" stroke="#333" marker-end="url(#a6)"/>
+      <line x1="240" y1="60" x2="265" y2="60" stroke="#333"/>
+      <line x1="340" y1="60" x2="365" y2="60" stroke="#333"/>
+      <line x1="435" y1="60" x2="455" y2="60" stroke="#333"/>
+      <text x="260" y="110" text-anchor="middle" font-size="9" fill="#666" font-family="sans-serif">Issue 03+ 将把 sample(t) 流式发给 arm_controller；Issue 02 用 q,q̇,q̈ 建回归矩阵 Y</text>
+      <defs><marker id="a6" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#333"/></marker></defs>
+    </svg>
+    <figcaption>Issue 01 只负责「离线生成 + 校验」轨迹；在线跟踪与录 bag 在后续 Issue</figcaption>
+  </figure>
+
+  <h2>4. 走读：构造阶段（__init__）</h2>
+
+  <p><code>ExcitationTrajectory.from_yaml(path)</code> 读入 yaml 后，在 <code>__init__</code> 中：</p>
+  <ol>
+    <li><strong>锁定 Arm 四关节</strong> — <code>arm_joints</code> 必须等于 <code>ARM_JOINTS</code>，拒绝 Gripper。</li>
+    <li><strong>ω₀</strong> — <code>self._omega0 = 2 * pi / period_s</code>（对应公式 ω₀=2π/T）。</li>
+    <li><strong>软限位</strong> — 对 URDF 硬限位 [lower, upper]，内缩 10%：
+      <code>soft_lower = lower + inset*span</code>，<code>soft_upper = upper - inset*span</code>。</li>
+    <li><strong>谐波幅值</strong> — <code>_build_harmonics()</code>：
+      权重 w_k = 1/k，归一化后 a_k = (0.3 × 全行程) × w_k / Σw。</li>
+    <li><strong>缩放</strong> — <code>_compute_amplitude_scale()</code> 取所有关节、所有约束的最小比例 s：
+      <ul>
+        <li>位置：Σa_k ≤ min(q₀−soft_lo, soft_hi−q₀)</li>
+        <li>速度：Σ a_k · k · ω₀ ≤ 1.0 rad/s</li>
+        <li>加速度：Σ a_k · k² · ω₀² ≤ 2.0 rad/s²</li>
+      </ul>
+      实际幅值 = s × a_k（存于 <code>_scaled_amplitudes</code>）。默认配置 s≈0.39，因 joint1 速度约束最紧。</li>
+  </ol>
+
+  <aside>
+    <strong>解析界 vs 数值校验：</strong>缩放用<strong>三角恒等式上界</strong>（各谐波同相叠加）保守估计；
+    <code>validate_period(2000)</code> 再密采样确认软限位与速度 cap——单元测试依赖后者。
+  </aside>
+
+  <h2>5. 走读：采样 _joint_kinematics(joint, t)</h2>
+
+  <p>这是公式直接落地处（<code>excitation_trajectory.py</code> 约 220–236 行）：</p>
+
+  <pre><code>q   = q0
+qd  = 0
+qdd = 0
+for amp, harmonic, phase in zip(amps, range(1, N+1), phases):
+    omega = harmonic * omega0          # k · ω₀
+    angle = omega * t + phase
+    q   += amp * sin(angle)            # 位置项
+    qd  += amp * omega * cos(angle)    # 一阶导 → q̇
+    qdd += -amp * omega**2 * sin(angle) # 二阶导 → q̈</code></pre>
+
+  <p><code>sample(t)</code> 对四个关节各算一组 (q, q̇, q̈)，打包为不可变 dataclass <code>TrajectorySample</code>。
+  下游 Issue 02 的 Pinocchio regressor 需要的就是这三组量 + 测得 τ。</p>
+
+  <h2>6. 走读：安全校验 _validate_state</h2>
+
+  <p>在线实验（Issue 03/04）若关节超出软限位或 |q̇|&gt;1.0 rad/s，应<strong>中止激励</strong>（User Story 8）。
+  离线生成器用同样规则自检：</p>
+  <ul>
+    <li>q ∉ [soft_lower, soft_upper] → <code>SafetyViolation</code></li>
+    <li>|q̇| &gt; max_velocity → <code>SafetyViolation</code></li>
+    <li>|q̈| &gt; max_acceleration → <code>SafetyViolation</code>（Phase 1 默认 2.0 rad/s²）</li>
+  </ul>
+  <p><code>main()</code> CLI 在打印前先调用 <code>validate_period()</code>，保证默认 yaml 可安全用于 Gazebo/实机流程。</p>
+
+  <h2>7. excitation.yaml 与 URDF 的对应</h2>
+
+  <table class="flow">
+    <tr><th>关节</th><th>URDF hard limit (rad)</th><th>q₀ (中点)</th><th>30% 全行程</th></tr>
+    <tr><td>joint1</td><td>[−π, π]</td><td>0</td><td>≈ 1.88</td></tr>
+    <tr><td>joint2</td><td>[−1.5, 1.5]</td><td>0</td><td>0.90</td></tr>
+    <tr><td>joint3</td><td>[−1.5, 1.4]</td><td>−0.05</td><td>0.87</td></tr>
+    <tr><td>joint4</td><td>[−1.7, 1.97]</td><td>0.135</td><td>1.10</td></tr>
+  </table>
+
+  <p>yaml 中 <code>approach.duration_s</code> / <code>hold_duration_s</code> 预留给 Issue 03：
+  实机先<strong>慢速移到 q₀</strong>，<strong>静止保持 2 s</strong>，再启动傅里叶段，避免瞬态污染数据集（User Story 9）。</p>
+
+  <h2>8. 在 Docker 里亲手跑一遍</h2>
+
+  <pre><code># 宿主机
+./docker/container.sh enter
+
+# 容器内
+cd ~/ros2_ws
+colcon build --packages-select open_manipulator_sysid --symlink-install
+source install/setup.bash
+ros2 run open_manipulator_sysid excitation_trajectory_print --samples 5</code></pre>
+
+  <p>期望输出：t=0 与 t=5 s 时四关节回到 q₀；<code>amplitude_scale</code> 打印约 0.39；
+  peak |q̇| 对 joint1 约为 1.0 rad/s（触达速度 cap）。</p>
+
+  <h2>9. 与后续 Issue 的衔接</h2>
+
+  <table class="flow">
+    <tr><th>Issue</th><th>与本课关系</th></tr>
+    <tr><td><strong>01</strong>（本课）</td><td>离线 q(t), q̇, q̈ + 安全校验</td></tr>
+    <tr><td><strong>02</strong> 离线回归</td><td>Pinocchio 建 Y(q,q̇,q̈)，最小二乘求 BIP+Fv+Fc</td></tr>
+    <tr><td><strong>03</strong> Gazebo</td><td>position 模式跟踪本轨迹，录 bag</td></tr>
+    <tr><td><strong>04</strong> 实机</td><td>同上 + τ 来自 effort / Present Current</td></tr>
+  </table>
+
+  <aside>
+    与第 5 课 GC 的对比：GC 用 <strong>effort</strong> 接口、力矩前馈 g(q)；
+    sysid 用 <strong>position</strong> 跟踪激励轨迹、录 τ 做回归——两套 launch <strong>互斥</strong>（ADR-0001）。
+  </aside>
+
+  <h2>10. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>Phase 1 激励轨迹为何选用多频傅里叶而非「随机乱动」？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 傅里叶算力矩比 RNEA 更快</button></li>
+      <li><button type="button" data-answer="correct">B. 使回归矩阵 Y 各列持续激励、参数可辨识</button></li>
+      <li><button type="button" data-answer="wrong">C. Dynamixel 只能跟踪正弦波</button></li>
+      <li><button type="button" data-answer="wrong">D. MoveIt 规划器强制傅里叶格式</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>代码里 amplitude_scale &lt; 1 的主要原因通常是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. yaml 读取出错自动降级</button></li>
+      <li><button type="button" data-answer="correct">B. 30% 名义幅值叠加后超速度/软限位，需统一缩小</button></li>
+      <li><button type="button" data-answer="wrong">C. Pinocchio regressor 数值条件数要求</button></li>
+      <li><button type="button" data-answer="wrong">D. Gazebo 仿真步长限制</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>_joint_kinematics 里 qdd 项的符号与形式是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. +amp · ω · cos(ωt)</button></li>
+      <li><button type="button" data-answer="wrong">B. +amp · ω² · cos(ωt)</button></li>
+      <li><button type="button" data-answer="correct">C. −amp · ω² · sin(ωt + φ)</button></li>
+      <li><button type="button" data-answer="wrong">D. 常数 0（只激励位置）</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>11. 延伸阅读</h2>
+  <ul>
+    <li><strong>主参考（激励设计）</strong>：
+      Swevers J. et al., «Optimal robot excitation for parameter identification of robot dynamics»,
+      <em>Robotica</em>, 1997 — 多频傅里叶与可辨识性经典出处。</li>
+    <li>速查：<a href="../reference/sysid-excitation-trajectory.html">reference/sysid-excitation-trajectory.html</a></li>
+    <li>PRD：<code>.scratch/open-manipulator-x-sysid/PRD.md</code></li>
+    <li>源码：<code>open_manipulator_sysid/open_manipulator_sysid/excitation_trajectory.py</code></li>
+    <li>术语：<code>CONTEXT.md</code> §参数辨识 · <code>learning-records/0008-grill-omx-sysid.md</code></li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「为什么 joint1 的 amplitude_scale 最小？」、
+    「若把 N 改成 3 会怎样？」或「帮我对照 Issue 02 看 Y 矩阵怎么建」——我会按你的 MISSION 继续往下教。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0005-omx-gravity-compensation-implementation.html">第 5 课</a> ·
+    <a href="../reference/sysid-excitation-trajectory.html">激励轨迹速查</a> ·
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a> ·
+    <a href="../CONTEXT.md">CONTEXT</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。辨识需要 Y 列满秩/持续激励；可重复、有界的傅里叶模板是工业标准做法。',
+      wrong: '不对。核心是可辨识性，与 RNEA 速度或 MoveIt 无关。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。名义 30% 叠加 5 个谐波后解析速度界常超过 1.0 rad/s，故统一乘 s。',
+      wrong: '不对。缩放来自安全约束，不是 yaml 错误或仿真步长。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。sin 的二阶导是 −ω² sin，代码与公式一致。',
+      wrong: '不对。+ω cos 是一阶导；q̈ 必须含 −ω² sin 项。'
+    });
+  </script>
+</body>
+</html>

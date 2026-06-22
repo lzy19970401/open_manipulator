@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参考：Sysid 傅里叶激励轨迹</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .formula { font-family: var(--font-serif); margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+    dl.ref dt { font-family: var(--font-sans); font-weight: 600; margin-top: 0.75rem; }
+    dl.ref dd { margin-left: 0; color: var(--muted); font-size: 0.92rem; }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">速查 · 对应 <a href="../lessons/0006-omx-sysid-excitation-trajectory.html">第 6 课</a></p>
+
+  <h1>傅里叶激励轨迹 · 公式与代码对照</h1>
+
+  <h2>动力学辨识目标</h2>
+  <p class="formula">M(q)q̈ + C(q,q̇)q̇ + G(q) + F(q̇) = τ</p>
+  <p class="formula">Y(q, q̇, q̈) · π = τ &nbsp;（线性回归：π = BIP + 摩擦参数）</p>
+
+  <h2>单关节多频傅里叶（Phase 1 实现）</h2>
+  <p class="formula">q_j(t) = q₀_j + Σ<sub>k=1..N</sub> a<sub>jk</sub> sin(k ω₀ t + φ<sub>jk</sub>)</p>
+  <p class="formula">ω₀ = 2π / T</p>
+  <p class="formula">q̇_j = Σ a<sub>jk</sub> k ω₀ cos(k ω₀ t + φ<sub>jk</sub>)</p>
+  <p class="formula">q̈_j = −Σ a<sub>jk</sub> (k ω₀)² sin(k ω₀ t + φ<sub>jk</sub>)</p>
+
+  <h2>OMX Phase 1 默认（excitation.yaml）</h2>
+  <table class="compact">
+    <tr><th>参数</th><th>值</th><th>代码位置</th></tr>
+    <tr><td>关节</td><td>joint1–4（无 Gripper）</td><td><code>ARM_JOINTS</code></td></tr>
+    <tr><td>q₀</td><td>限位中点</td><td><code>config['q0']</code></td></tr>
+    <tr><td>N, T</td><td>5, 10 s</td><td><code>num_harmonics</code>, <code>period_s</code></td></tr>
+    <tr><td>幅值</td><td>30% 硬限位全行程</td><td><code>amplitude_fraction</code></td></tr>
+    <tr><td>谐波分配</td><td>a_k ∝ 1/k</td><td><code>_build_harmonics()</code></td></tr>
+    <tr><td>相位</td><td>φ = 0 → t=0 时 q=q₀</td><td><code>phases[joint] = [0]*N</code></td></tr>
+    <tr><td>软限位</td><td>硬限位内缩 10%</td><td><code>soft_limit_inset_fraction</code></td></tr>
+    <tr><td>速度上限</td><td>1.0 rad/s</td><td><code>max_velocity_rad_s</code></td></tr>
+    <tr><td>统一缩放</td><td>s = min(位置, 速度, 加速度约束)</td><td><code>_compute_amplitude_scale()</code></td></tr>
+  </table>
+
+  <h2>代码入口</h2>
+  <dl class="ref">
+    <dt>构造</dt>
+    <dd><code>ExcitationTrajectory.from_yaml(path)</code></dd>
+    <dt>采样</dt>
+    <dd><code>trajectory.sample(t)</code> → <code>TrajectorySample</code></dd>
+    <dt>校验</dt>
+    <dd><code>validate_period()</code> → 超限抛 <code>SafetyViolation</code></dd>
+    <dt>CLI</dt>
+    <dd><code>ros2 run open_manipulator_sysid excitation_trajectory_print</code></dd>
+  </dl>
+
+  <h2>术语（CONTEXT.md §参数辨识）</h2>
+  <dl class="ref">
+    <dt>Excitation trajectory</dt><dd>为充分激励动力学而设计的 q(t) 参考轨迹</dd>
+    <dt>BIP</dt><dd>最小惯性参数集，线性回归中的 π 一部分</dd>
+    <dt>Fv / Fc</dt><dd>粘滞 / 库仑摩擦系数</dd>
+    <dt>Identification dataset</dt><dd>同步记录的 (q, q̇, q̈, τ) 时间序列</dd>
+  </dl>
+
+  <nav class="lesson-nav">
+    <a href="../lessons/0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="../CONTEXT.md">CONTEXT</a> ·
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a>
+  </nav>
+
+</body>
+</html>
