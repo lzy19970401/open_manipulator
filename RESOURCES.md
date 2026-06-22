@@ -38,3 +38,10 @@
 
 - OpenMANIPULATOR-X 四轴臂无公开 Pinocchio 专用教程；本课 `teaching-examples/` 填补。
 - URDF 含 mimic 夹爪时 nq/nv 与 arm 四关节的映射需在实机上校准。
+
+## System identification（参数辨识）
+
+- [Swevers et al. — Optimal robot excitation for parameter identification (Robotica 1997)](https://doi.org/10.1017/S026357479700038X)
+  多频傅里叶激励与可辨识性经典参考。Use for: Issue 01 激励轨迹设计依据。
+- 仓库内：`.scratch/open-manipulator-x-sysid/PRD.md`、`docs/adr/0001-omx-sysid-approach.md`
+  OMX sysid 独立包路线。Use for: 与 GC 配置隔离、Gazebo-first 流程。
