@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 5 课：OMX 重力补偿实现流程</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #2563eb; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 5 课 · Issue 01–04 代码走读 · 约 20 分钟 ·
+    <a href="0004-dynamics-libraries-comparison.html">← 第 4 课</a>
+  </p>
+
+  <h1>OpenMANIPULATOR-X 重力补偿：Issue 01–04 实现流程</h1>
+
+  <p class="lead">
+    第 3 课讲「算什么」（g(q)）；本课讲「<strong>谁在读关节角、谁在算力矩、谁在下发命令</strong>」——
+    对照仓库里已落地的 Issue 01–04，逐段走读
+    <code>gravity_compensation_controller.cpp</code> 与 ros2_control 链路。
+    <strong>不修改机器人包</strong>，只做概念与代码地图。
+  </p>
+
+  <h2>1. 四条 Issue 各管什么</h2>
+
+  <table class="flow">
+    <tr>
+      <th>Issue</th>
+      <th>主要文件</th>
+      <th>在链路中的角色</th>
+    </tr>
+    <tr>
+      <td><strong>01</strong> 硬件 GC 模式</td>
+      <td>
+        <code class="file">open_manipulator_x_current.ros2_control.xacro</code><br>
+        <code class="file">config/open_manipulator_x_gc/hardware_controller_manager.yaml</code><br>
+        <code class="file">open_manipulator_x_gravity_compensation.launch.py</code>
+      </td>
+      <td>Arm（joint1–4）声明 <strong>effort</strong> 命令；Dynamixel ID 11–14 设为 <strong>Mode 0 电流控制</strong></td>
+    </tr>
+    <tr>
+      <td><strong>02</strong> Gazebo GC</td>
+      <td>
+        <code class="file">open_manipulator_x_gravity_compensation_gazebo.launch.py</code><br>
+        <code class="file">gazebo/open_manipulator_x.gazebo.xacro</code>（<code>use_effort_transmission</code>）
+      </td>
+      <td>仿真侧 joint1–4 用 <strong>EffortTransmission</strong>，effort 命令能驱动 Gazebo 关节</td>
+    </tr>
+    <tr>
+      <td><strong>03</strong> 安全退出</td>
+      <td><code class="file">gc_shutdown_torque_disable.py</code></td>
+      <td>launch 退出时 Arm <strong>Torque disable</strong>（配合控制器 effort 清零）</td>
+    </tr>
+    <tr>
+      <td><strong>04</strong> 文档</td>
+      <td><code class="file">docs/open-manipulator-x-gravity-compensation.md</code></td>
+      <td>操作说明；不参与运行时</td>
+    </tr>
+  </table>
+
+  <aside>
+    <strong>动力学计算</strong>不在 Issue 01–04 里新写，而是复用已有包
+    <code>om_gravity_compensation_controller</code>。Issue 01–02 负责把 OMX <em>接到</em> 这个控制器上。
+  </aside>
+
+  <h2>2. 启动时发生了什么</h2>
+
+  <p>真机 GC launch 做三件事：</p>
+  <ol>
+    <li><strong>xacro</strong> 生成 <code>robot_description</code>，参数 <code>ros2_control_type:=open_manipulator_x_current</code></li>
+    <li><strong>yaml</strong> 加载 <code>open_manipulator_x_gc/hardware_controller_manager.yaml</code>（4 关节、effort 命令、摩擦=0）</li>
+    <li><strong>spawner</strong> 激活 <code>gravity_compensation_controller</code> + <code>joint_state_broadcaster</code></li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 520 120" width="520" height="120" aria-label="启动与 200Hz 循环">
+      <text x="260" y="18" text-anchor="middle" font-size="11" font-family="sans-serif" fill="#666">每 5 ms（200 Hz）</text>
+      <rect x="10" y="30" width="90" height="36" fill="#f3f4f6" stroke="#333"/>
+      <text x="55" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">Hardware</text>
+      <text x="55" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">read 编码器</text>
+      <rect x="120" y="30" width="100" height="36" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="170" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">GC Controller</text>
+      <text x="170" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">update()</text>
+      <rect x="240" y="30" width="80" height="36" fill="#dcfce7" stroke="#15803d"/>
+      <text x="280" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">KDL RNEA</text>
+      <text x="280" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">τ N·m</text>
+      <rect x="340" y="30" width="80" height="36" fill="#f3f4f6" stroke="#333"/>
+      <text x="380" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">Hardware</text>
+      <text x="380" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">write 电流</text>
+      <rect x="440" y="30" width="70" height="36" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="475" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">JSB</text>
+      <text x="475" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">/joint_states</text>
+      <line x1="100" y1="48" x2="120" y2="48" stroke="#333" marker-end="url(#a5)"/>
+      <line x1="220" y1="48" x2="240" y2="48" stroke="#333"/>
+      <line x1="320" y1="48" x2="340" y2="48" stroke="#333"/>
+      <text x="170" y="95" text-anchor="middle" font-size="9" fill="#666" font-family="sans-serif">state: position, velocity ← 关节角在这里进入控制器</text>
+      <defs><marker id="a5" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#333"/></marker></defs>
+    </svg>
+    <figcaption>控制回路 vs 观测：<code>joint_state_broadcaster</code> 只发布 TF/观测，不参与算力矩</figcaption>
+  </figure>
+
+  <h2>3. 模块分工（谁负责什么）</h2>
+
+  <table class="flow">
+    <tr>
+      <th>模块</th>
+      <th>职责</th>
+      <th>关节角？</th>
+      <th>算力矩？</th>
+    </tr>
+    <tr>
+      <td><strong>DynamixelHardware</strong> / GazeboSim</td>
+      <td>读编码器 → state；收 effort → Goal Current / 仿真力矩</td>
+      <td><strong>源头</strong>（Present Position）</td>
+      <td>否</td>
+    </tr>
+    <tr>
+      <td><strong>gravity_compensation_controller</strong></td>
+      <td>读 state → KDL → 写 effort</td>
+      <td>读 interface</td>
+      <td><strong>唯一计算者</strong></td>
+    </tr>
+    <tr>
+      <td><strong>joint_state_broadcaster</strong></td>
+      <td>汇总 state → <code>/joint_states</code></td>
+      <td>转发（观测）</td>
+      <td>否</td>
+    </tr>
+    <tr>
+      <td><strong>robot_state_publisher</strong></td>
+      <td>URDF + joint_states → TF</td>
+      <td>否</td>
+      <td>否</td>
+    </tr>
+  </table>
+
+  <aside>
+    GC 控制器<strong>不订阅</strong> <code>/joint_states</code> 来做控制（那是给 OMY 主从 follower 用的）。
+    它读的是 ros2_control 的 <strong>hardware state interface</strong>。
+  </aside>
+
+  <h2>4. ros2_control 接口（Issue 01）</h2>
+
+  <p>Arm 四关节在 xacro 中声明：</p>
+  <pre><code>&lt;joint name="joint1"&gt;
+  &lt;command_interface name="effort"/&gt;
+  &lt;state_interface name="position"/&gt;
+  &lt;state_interface name="velocity"/&gt;
+&lt;/joint&gt;
+&lt;!-- joint2–4 同上；gripper 仍为 position --&gt;</code></pre>
+
+  <p>真机 Dynamixel 映射：</p>
+  <pre><code>state position  ←  Present Position（rad）
+state velocity  ←  Present Velocity（rad/s）
+command effort  →  Goal Current（电流模式，Operating Mode 0）</code></pre>
+
+  <p>GC yaml 指定控制器只管 4 个 Arm 关节：</p>
+  <pre><code>joints: [joint1, joint2, joint3, joint4]
+command_interfaces: [effort]
+state_interfaces: [position, velocity]
+input_velocity_scaling_factors: [0, 0, 0, 0]      # Phase 1 纯 g(q)
+input_acceleration_scaling_factors: [0, 0, 0, 0]</code></pre>
+
+  <h2>5. <code>gravity_compensation_controller.cpp</code> 生命周期</h2>
+
+  <p>控制器是 ros2_control 插件，由 <code>controller_manager</code> 驱动：</p>
+  <pre><code>on_init → on_configure → on_activate → [update × N @ 200Hz] → on_deactivate</code></pre>
+
+  <h3>5.1 <code>on_configure</code> — 建模型</h3>
+  <ul>
+    <li>读 yaml：<code>joints</code>、摩擦系数、<code>torque_scaling_factors</code></li>
+    <li>从 <code>robot_description</code> 解析 URDF → <strong>KDL Tree</strong>（质量/惯性/关节轴决定 g(q)）</li>
+    <li>Tree 含夹爪共 6 关节；GC 只填 q_nr 0–3（joint1–4）</li>
+  </ul>
+
+  <h3>5.2 <code>on_activate</code> — 绑定 hardware 接口</h3>
+  <ul>
+    <li><code>joint_state_interface_[0]</code> → position（4 个）</li>
+    <li><code>joint_state_interface_[1]</code> → velocity（4 个）</li>
+    <li><code>joint_command_interface_[0]</code> → effort（4 个）</li>
+    <li>初始化 <code>previous_velocities_</code>，避免首帧 NaN</li>
+  </ul>
+
+  <h3>5.3 <code>update()</code> — 每帧核心（6 步）</h3>
+
+  <p><span class="step-num">1</span><strong>读关节角与角速度</strong></p>
+  <pre><code>assign_point_from_interface(joint_positions_, joint_state_interface_[0]);
+assign_point_from_interface(joint_velocities_, joint_state_interface_[1]);</code></pre>
+  <p>单位：<strong>rad</strong>、<strong>rad/s</strong>。来源是上一帧 hardware <code>read()</code> 写入的 state。</p>
+
+  <p><span class="step-num">2</span><strong>速度/加速度预处理</strong></p>
+  <p>OMX GC yaml 中 scaling 全为 0 → 等价 <code>q̇ = 0</code>、<code>q̈ = 0</code>，走纯重力（尽管实现用的是 RNEA 而非 <code>JntToGravity</code>）。</p>
+
+  <p><span class="step-num">3</span><strong>填入 KDL 关节数组</strong></p>
+  <pre><code>for (i = 0..3) {
+  q(i)     = joint_positions_[i];
+  q_dot(i) = joint_velocities_[i];
+  q_ddot(i)= joint_accelerations[i];
+}</code></pre>
+
+  <p><span class="step-num">4</span><strong>KDL 逆动力学 → 补偿力矩</strong>（本课核心）</p>
+  <pre><code>KDL::TreeIdSolver_RNE idsolver(tree_, KDL::Vector(0, 0, -9.81));
+idsolver.CartToJnt(q, q_dot, q_ddot, f_ext_, torques);</code></pre>
+  <p>输出 <code>torques(i)</code> 单位 <strong>N·m</strong>。在 q̇=q̈=0 时 ≈ g(q)。</p>
+  <p>home 位姿（q=0）数量级示例：joint2 ≈ −0.44 N·m，joint3 ≈ −0.36 N·m，joint4 ≈ −0.06 N·m（依赖 URDF 惯性）。</p>
+
+  <p><span class="step-num">5</span><strong>可选修正（OMX Phase 1 全跳过）</strong></p>
+  <table class="flow">
+    <tr><th>代码块</th><th>作用</th><th>OMX GC</th></tr>
+    <tr><td><code>enable_spring_effect</code></td><td>joint3 弹簧</td><td>未开</td></tr>
+    <tr><td><code>collision + follower</code></td><td>OMY 主从同步</td><td>无 follower</td></tr>
+    <tr><td>摩擦 + dither</td><td>库仑/静摩擦</td><td>yaml 全 0</td></tr>
+  </table>
+
+  <p><span class="step-num">6</span><strong>写 effort 命令</strong></p>
+  <pre><code>effort = torques(i) * torque_scaling_factors[i];
+joint_command_interface_[0][i].set_value(effort);</code></pre>
+  <p>下一帧 hardware <code>write()</code> 把 effort 转为 Dynamixel Goal Current 或 Gazebo 关节力矩。</p>
+
+  <h3>5.4 <code>on_deactivate</code> — 退出清零</h3>
+  <p>四轮 effort 置 0；Issue 03 的 <code>gc_shutdown_torque_disable</code> 再对 ID 11–14 做 Torque Enable=0。</p>
+
+  <h2>6. 一帧数据流（背诵版）</h2>
+
+  <pre><code>[Dynamixel 编码器]
+       ↓ hardware read()
+[ros2_control state: joint*/position, velocity]   ← 关节角
+       ↓ update() Step 1
+[joint_positions_, joint_velocities_]
+       ↓ Step 3
+[KDL q, q_dot, q_ddot]
+       ↓ Step 4  CartToJnt
+[torques(0..3)  单位 N·m]                           ← 补偿力矩
+       ↓ Step 6
+[command effort]
+       ↓ hardware write()
+[Goal Current → 电机电流 → 输出轴力矩]</code></pre>
+
+  <h2>7. 真机 vs Gazebo vs 标准 position launch</h2>
+
+  <table class="flow">
+    <tr>
+      <th></th>
+      <th>Standard launch</th>
+      <th>GC launch（真机）</th>
+      <th>GC Gazebo launch</th>
+    </tr>
+    <tr>
+      <td>xacro</td>
+      <td><code>open_manipulator_x_position</code></td>
+      <td><code>open_manipulator_x_current</code></td>
+      <td>同上 + effort transmission</td>
+    </tr>
+    <tr>
+      <td>Arm 命令</td>
+      <td>position</td>
+      <td><strong>effort</strong></td>
+      <td><strong>effort</strong></td>
+    </tr>
+    <tr>
+      <td>主控制器</td>
+      <td>arm_controller</td>
+      <td><strong>gravity_compensation_controller</strong></td>
+      <td>同上</td>
+    </tr>
+    <tr>
+      <td>关节角来源</td>
+      <td>编码器 → state</td>
+      <td>同上</td>
+      <td>仿真关节 state</td>
+    </tr>
+    <tr>
+      <td>力矩计算</td>
+      <td>无（驱动器内 PD）</td>
+      <td><strong>KDL RNEA</strong></td>
+      <td>同上</td>
+    </tr>
+  </table>
+
+  <aside>
+    两套 launch <strong>互斥</strong>：同一关节不能同时 claim position 与 effort command interface。
+  </aside>
+
+  <h2>8. 实机单位陷阱（上机前必读）</h2>
+
+  <p>控制器输出 <strong>N·m</strong>，但 <code>dynamixel_hardware_interface</code> 把 effort 映射为 Goal Current 时，
+  model 里单位是 <code>raw</code>（倍率 1.0）——即<strong>未自动做 N·m → 电流换算</strong>。</p>
+
+  <pre><code>Goal Current 寄存器（1 LSB ≈ 2.69 mA，X 系列）
+物理力矩 τ_shaft ≈ Kt × I(A)
+
+例：joint2 需 ≈ 0.44 N·m，XM430-W350-R Kt=1.783 N·m/A
+  → multiplier = 1.783 × 0.00269 ≈ 0.004796
+  → Goal Current_raw ≈ 0.44 / 0.004796 ≈ 92
+  若直接写 0.44 → raw=0 → 几乎无补偿</code></pre>
+
+  <p>Phase 1 实机验证前需：符号校准（见第 3 课）+ N·m→Goal Current 换算（后续 issue 或 <code>torque_scaling_factors</code> 临时 workaround）。</p>
+
+  <h2>9. 与第 3 课的关系</h2>
+
+  <table class="flow">
+    <tr><th>第 3 课（概念）</th><th>本课（工程落地）</th></tr>
+    <tr>
+      <td>Pinocchio <code>computeGeneralizedGravity</code></td>
+      <td>仓库现用 KDL <code>TreeIdSolver_RNE</code>（OMY 模板）</td>
+    </tr>
+    <tr>
+      <td>ROBOTIS ROS1 <code>JntToGravity</code> + chain</td>
+      <td>OMX 用 Tree + 仅 4 关节进控制器</td>
+    </tr>
+    <tr>
+      <td>独立 teaching-examples</td>
+      <td>ros2_control 200 Hz 闭环 + Dynamixel Mode 0</td>
+    </tr>
+  </table>
+
+  <h2>10. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>GC 控制器从哪里读当前关节角 q？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 订阅 /joint_states topic</button></li>
+      <li><button type="button" data-answer="correct">B. ros2_control hardware state interface（position）</button></li>
+      <li><button type="button" data-answer="wrong">C. 直接读 Dynamixel SDK</button></li>
+      <li><button type="button" data-answer="wrong">D. MoveIt 规划结果</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>OMX Phase 1 GC yaml 中 velocity/acceleration scaling 全为 0 的效果是？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 关闭控制器</button></li>
+      <li><button type="button" data-answer="correct">B. 令 q̇、q̈ 不参与，RNEA 输出近似纯 g(q)</button></li>
+      <li><button type="button" data-answer="wrong">C. 把 effort 命令置零</button></li>
+      <li><button type="button" data-answer="wrong">D. 只补偿 joint1</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>补偿力矩 τ 在 update() 里由谁计算？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. joint_state_broadcaster</button></li>
+      <li><button type="button" data-answer="wrong">B. DynamixelHardware read()</button></li>
+      <li><button type="button" data-answer="correct">C. KDL TreeIdSolver_RNE::CartToJnt</button></li>
+      <li><button type="button" data-answer="wrong">D. robot_state_publisher</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>11. 延伸阅读</h2>
+  <ul>
+    <li>工程文档：<code>docs/open-manipulator-x-gravity-compensation.md</code>（Issue 04）</li>
+    <li>控制器源码：<code>ros2_controller/om_gravity_compensation_controller/src/gravity_compensation_controller.cpp</code></li>
+    <li>领域术语：<code>CONTEXT.md</code>（Gravity compensation control mode、Torque enable）</li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「帮我 trace 一帧从 read 到 write 的调用栈」或「N·m 到 Goal Current 该加在哪一层？」
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0003-pinocchio-gravity-compensation.html">第 3 课</a> ·
+    <a href="0004-dynamics-libraries-comparison.html">第 4 课</a> ·
+    <a href="../docs/open-manipulator-x-gravity-compensation.md">工程文档</a> ·
+    <a href="../CONTEXT.md">CONTEXT</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。state interface 由 hardware read() 填充；/joint_states 只是观测。',
+      wrong: '不对。控制回路走 loaned interface，不是订阅 joint_states。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。scaling=0 使 q_dot/q_ddot 为零，RNEA 退化为重力项。',
+      wrong: '不对。scaling 只影响传入 KDL 的速度/加速度，不关断控制器。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。CartToJnt 是 update() 里唯一的动力学计算。',
+      wrong: '不对。broadcaster 和 RSP 不参与力矩计算。'
+    });
+  </script>
+</body>
+</html>
