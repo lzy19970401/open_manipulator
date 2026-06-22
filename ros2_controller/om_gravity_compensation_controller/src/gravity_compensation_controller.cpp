@@ -14,6 +14,7 @@
 
 #include <gravity_compensation_controller/gravity_compensation_controller.hpp>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <stdexcept>
 #include <rclcpp/rclcpp.hpp>
@@ -77,9 +78,17 @@ controller_interface::return_type GravityCompensationController::update(
   }
   // Calculate acceleration from velocity using finite difference
   std::vector<double> joint_accelerations(n_joints_);
+  const double period_sec = period.seconds();
   for (size_t i = 0; i < n_joints_; ++i) {
-    joint_accelerations[i] = (joint_velocities_[i] - previous_velocities_[i]) / period.seconds() *
-      params_.input_acceleration_scaling_factors[i];
+    const double accel_scale = params_.input_acceleration_scaling_factors[i];
+    if (accel_scale == 0.0 || period_sec <= 0.0) {
+      // Avoid 0/0 and inf*0 (which yield NaN) when acceleration is disabled or
+      // on the first controller update before a valid period is available.
+      joint_accelerations[i] = 0.0;
+    } else {
+      joint_accelerations[i] =
+        (joint_velocities_[i] - previous_velocities_[i]) / period_sec * accel_scale;
+    }
   }
 
   // Create KDL objects for computation
@@ -161,8 +170,13 @@ controller_interface::return_type GravityCompensationController::update(
       }
     }
 
-    bool set_ok = joint_command_interface_[0][i].get().set_value(
-      torques(i) * params_.torque_scaling_factors[i]);
+    const double effort = torques(i) * params_.torque_scaling_factors[i];
+    if (!std::isfinite(effort)) {
+      RCLCPP_ERROR_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 2000,
+        "Non-finite effort on joint %zu (KDL index %zu); commanding 0.0", i, i);
+    }
+    bool set_ok = joint_command_interface_[0][i].get().set_value(std::isfinite(effort) ? effort : 0.0);
     if (!set_ok) {
       RCLCPP_ERROR(
         get_node()->get_logger(), "Failed to set command value for joint %zu, interface %u", i, 0);
@@ -335,6 +349,12 @@ controller_interface::CallbackReturn GravityCompensationController::on_activate(
       return CallbackReturn::ERROR;
     }
   }
+  for (size_t index = 0; index < n_joints_; ++index) {
+    previous_velocities_[index] =
+      joint_state_interface_[1][index].get().get_optional().value_or(0.0) *
+      params_.input_velocity_scaling_factors[index];
+  }
+
   RCLCPP_INFO(get_node()->get_logger(), "GravityCompensationController activated successfully.");
   return CallbackReturn::SUCCESS;
 }

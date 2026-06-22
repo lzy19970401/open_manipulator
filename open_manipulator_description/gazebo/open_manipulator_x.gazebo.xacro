@@ -2,9 +2,9 @@
 
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
 
-  <xacro:macro name="open_manipulator_x_gazebo" params="prefix">
+  <xacro:macro name="open_manipulator_x_gazebo" params="prefix use_effort_transmission:=false">
 
-  <xacro:macro name="SimpleTransmission" params="trans joint actuator">
+  <xacro:macro name="PositionTransmission" params="trans joint actuator">
     <transmission name="${trans}">
       <type>transmission_interface/SimpleTransmission</type>
       <joint name="${joint}">
@@ -13,6 +13,19 @@
       <actuator name="${actuator}">
         <mechanicalReduction>1</mechanicalReduction>
         <hardwareInterface>PositionJointInterface</hardwareInterface>
+      </actuator>
+    </transmission>
+  </xacro:macro>
+
+  <xacro:macro name="EffortTransmission" params="trans joint actuator">
+    <transmission name="${trans}">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${joint}">
+        <hardwareInterface>EffortJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${actuator}">
+        <mechanicalReduction>1</mechanicalReduction>
+        <hardwareInterface>EffortJointInterface</hardwareInterface>
       </actuator>
     </transmission>
   </xacro:macro>
@@ -40,12 +53,20 @@
   <gazebo reference="${prefix}end_effector_link">
   </gazebo>
 
-  <xacro:SimpleTransmission trans="${prefix}trans1" joint="${prefix}joint1" actuator="${prefix}actuator1" />
-  <xacro:SimpleTransmission trans="${prefix}trans2" joint="${prefix}joint2" actuator="${prefix}actuator2" />
-  <xacro:SimpleTransmission trans="${prefix}trans3" joint="${prefix}joint3" actuator="${prefix}actuator3" />
-  <xacro:SimpleTransmission trans="${prefix}trans4" joint="${prefix}joint4" actuator="${prefix}actuator4" />
-  <xacro:SimpleTransmission trans="${prefix}trans5" joint="${prefix}gripper_left_joint" actuator="${prefix}actuator5" />
-  <xacro:SimpleTransmission trans="${prefix}trans6" joint="${prefix}gripper_right_joint" actuator="${prefix}actuator6" />
+  <xacro:if value="${use_effort_transmission}">
+    <xacro:EffortTransmission trans="${prefix}trans1" joint="${prefix}joint1" actuator="${prefix}actuator1" />
+    <xacro:EffortTransmission trans="${prefix}trans2" joint="${prefix}joint2" actuator="${prefix}actuator2" />
+    <xacro:EffortTransmission trans="${prefix}trans3" joint="${prefix}joint3" actuator="${prefix}actuator3" />
+    <xacro:EffortTransmission trans="${prefix}trans4" joint="${prefix}joint4" actuator="${prefix}actuator4" />
+  </xacro:if>
+  <xacro:unless value="${use_effort_transmission}">
+    <xacro:PositionTransmission trans="${prefix}trans1" joint="${prefix}joint1" actuator="${prefix}actuator1" />
+    <xacro:PositionTransmission trans="${prefix}trans2" joint="${prefix}joint2" actuator="${prefix}actuator2" />
+    <xacro:PositionTransmission trans="${prefix}trans3" joint="${prefix}joint3" actuator="${prefix}actuator3" />
+    <xacro:PositionTransmission trans="${prefix}trans4" joint="${prefix}joint4" actuator="${prefix}actuator4" />
+  </xacro:unless>
+  <xacro:PositionTransmission trans="${prefix}trans5" joint="${prefix}gripper_left_joint" actuator="${prefix}actuator5" />
+  <xacro:PositionTransmission trans="${prefix}trans6" joint="${prefix}gripper_right_joint" actuator="${prefix}actuator6" />
 
   </xacro:macro>
 

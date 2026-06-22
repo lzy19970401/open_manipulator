@@ -16,6 +16,8 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config/open_manipulator_x'),
             glob('config/open_manipulator_x/*')),
+        (os.path.join('share', package_name, 'config/open_manipulator_x_gc'),
+            glob('config/open_manipulator_x_gc/*')),
         (os.path.join('share', package_name, 'config/omy_3m'), glob('config/omy_3m/*')),
         (os.path.join('share', package_name, 'config/omy_f3m'), glob('config/omy_f3m/*')),
         (os.path.join('share', package_name, 'config/omy_f3m_follower_ai'),
@@ -50,6 +52,7 @@ setup(
             #以下格式为 节点名 = 包名.可执行文件名:main函数（入口函数）
             'joint_trajectory_executor = open_manipulator_bringup.joint_trajectory_executor:main',
             'om_create_udev_rules = open_manipulator_bringup.om_create_udev_rules:main',
+            'gc_shutdown_torque_disable = open_manipulator_bringup.gc_shutdown_torque_disable:main',
         ],
     },
 )

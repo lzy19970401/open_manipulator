@@ -1,0 +1,67 @@
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 100  # Hz — OMX USB 1 Mbps read ~5 ms; 200 Hz overruns (see omx_l_leader_ai)
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+
+      gravity_compensation_controller:
+        type: gravity_compensation_controller/GravityCompensationController
+
+/**:
+  gravity_compensation_controller:
+    ros__parameters:
+      joints:
+        - joint1
+        - joint2
+        - joint3
+        - joint4
+      command_interfaces:
+        - effort
+      state_interfaces:
+        - position
+        - velocity
+      # Friction: all zero — tune one joint at a time (start joint1).
+      # When tuning joint N only: set input_velocity_scaling_factors[N-1] non-zero
+      # (e.g. 0.05–0.1) and adjust kinetic/static scalars on that joint only.
+      kinetic_friction_scalars:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      static_friction_scalars:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      static_friction_velocity_thresholds:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      torque_scaling_factors:
+        - 1.0
+        - 0.8
+        - 0.8
+        - 0.8
+      kinetic_friction_torque_scalars:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      friction_compensation_velocity_thresholds:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      input_velocity_scaling_factors:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      input_acceleration_scaling_factors:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0

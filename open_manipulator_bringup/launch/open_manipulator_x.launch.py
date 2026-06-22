@@ -14,8 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Author: Wonho Yun, Sungho Woo, Woojin Wie
-#这个文件是 Open Manipulator X 的 ROS 2 启动文件，
+# OpenMANIPULATOR-X Standard control launch (position mode).
+#
+# Mutually exclusive with Gravity compensation control mode
+# (open_manipulator_x_gravity_compensation.launch.py): do not run both at once.
 # 用来把机器人描述、ros2_control 控制器、状态发布器、
 # 初始姿态程序和 RViz 按正确顺序启动起来
 from launch import LaunchDescription  #ROS 2 launch 文件最终返回的“启动清单”
