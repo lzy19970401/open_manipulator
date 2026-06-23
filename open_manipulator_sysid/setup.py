@@ -14,6 +14,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'), glob('config/*')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,6 +27,14 @@ setup(
         'console_scripts': [
             'excitation_trajectory_print = '
             'open_manipulator_sysid.excitation_trajectory:main',
+            'sysid_regress_synthetic = '
+            'open_manipulator_sysid.regress:main',
+            'sysid_regress_bag = '
+            'open_manipulator_sysid.regress:main_bag',
+            'bag_to_dataset = '
+            'open_manipulator_sysid.bag_to_dataset:main',
+            'excitation_runner = '
+            'open_manipulator_sysid.excitation_runner:main',
         ],
     },
 )
