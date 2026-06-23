@@ -111,6 +111,11 @@ class ExcitationTrajectory:
     def amplitude_scale(self) -> float:
         return self._amplitude_scale
 
+    @property
+    def q0(self) -> Dict[str, float]:
+        """Nominal excitation center pose (rad) per Arm joint."""
+        return {joint: self._limits[joint].q0 for joint in self._joints}
+
     def sample(self, time_s: float) -> TrajectorySample:
         """Return q, q̇, q̈ at excitation-local time t ∈ [0, period)."""
         t = float(time_s)
@@ -267,6 +272,183 @@ class ExcitationTrajectory:
                     f'{joint} acceleration {qdd:.4f} rad/s² exceeds cap '
                     f'{limits.max_acceleration:.4f} rad/s²'
                 )
+
+
+# Max of 30α² − 60α³ + 30α⁴ on α ∈ [0, 1] for quintic_blend endpoint-zero velocity.
+QUINTIC_MAX_VEL_COEFF = 1.875
+
+
+def required_approach_duration(
+    start_positions: Dict[str, float],
+    q0: Dict[str, float],
+    *,
+    joints: Sequence[str],
+    max_velocity: float,
+    min_duration_s: float,
+) -> float:
+    """Minimum approach time so quintic move from start→q₀ respects max_velocity."""
+    if max_velocity <= 0.0:
+        raise ValueError('max_velocity must be positive')
+    duration = float(min_duration_s)
+    for joint in joints:
+        delta = abs(q0[joint] - start_positions[joint])
+        if delta <= 1e-12:
+            continue
+        needed = delta * QUINTIC_MAX_VEL_COEFF / max_velocity
+        duration = max(duration, needed)
+    return duration
+
+
+def peak_approach_velocities(
+    start_positions: Dict[str, float],
+    q0: Dict[str, float],
+    *,
+    joints: Sequence[str],
+    approach_duration_s: float,
+) -> Dict[str, float]:
+    """Analytical peak |q̇| per joint during quintic approach."""
+    if approach_duration_s <= 0.0:
+        raise ValueError('approach_duration_s must be positive')
+    return {
+        joint: abs(q0[joint] - start_positions[joint])
+        * QUINTIC_MAX_VEL_COEFF
+        / approach_duration_s
+        for joint in joints
+    }
+
+
+def validate_approach_segment(
+    start_positions: Dict[str, float],
+    q0: Dict[str, float],
+    *,
+    joints: Sequence[str],
+    approach_duration_s: float,
+    max_velocity: float,
+    max_acceleration: float,
+    num_samples: int = 200,
+) -> None:
+    """Raise SafetyViolation when approach segment exceeds safety caps."""
+    if approach_duration_s <= 0.0:
+        raise ValueError('approach_duration_s must be positive')
+
+    for index in range(num_samples + 1):
+        alpha = index / num_samples
+        time_s = alpha * approach_duration_s
+        position: Dict[str, float] = {}
+        velocity: Dict[str, float] = {}
+        acceleration: Dict[str, float] = {}
+        for joint in joints:
+            pos, vel, acc = quintic_blend(
+                start_positions[joint],
+                q0[joint],
+                alpha,
+            )
+            position[joint] = pos
+            velocity[joint] = vel / approach_duration_s
+            acceleration[joint] = acc / (approach_duration_s * approach_duration_s)
+
+        for joint in joints:
+            q = position[joint]
+            qd = velocity[joint]
+            qdd = acceleration[joint]
+            if abs(qd) > max_velocity + 1e-9:
+                raise SafetyViolation(
+                    f'{joint} approach velocity {qd:.4f} rad/s at t={time_s:.3f}s '
+                    f'exceeds cap {max_velocity:.4f} rad/s'
+                )
+            if abs(qdd) > max_acceleration + 1e-9:
+                raise SafetyViolation(
+                    f'{joint} approach acceleration {qdd:.4f} rad/s² at t={time_s:.3f}s '
+                    f'exceeds cap {max_acceleration:.4f} rad/s²'
+                )
+
+
+def quintic_blend(start: float, end: float, alpha: float) -> tuple[float, float, float]:
+    """Quintic polynomial segment from start to end at normalized time alpha ∈ [0, 1]."""
+    alpha = float(max(0.0, min(1.0, alpha)))
+    alpha2 = alpha * alpha
+    alpha3 = alpha2 * alpha
+    alpha4 = alpha3 * alpha
+    alpha5 = alpha4 * alpha
+    pos_coeff = 10.0 * alpha3 - 15.0 * alpha4 + 6.0 * alpha5
+    vel_coeff = 30.0 * alpha2 - 60.0 * alpha3 + 30.0 * alpha4
+    acc_coeff = 60.0 * alpha - 180.0 * alpha2 + 120.0 * alpha3
+    delta = end - start
+    return start + delta * pos_coeff, delta * vel_coeff, delta * acc_coeff
+
+
+def build_excitation_trajectory_messages(
+    trajectory: ExcitationTrajectory,
+    *,
+    start_positions: Dict[str, float],
+    approach_duration_s: float,
+    hold_duration_s: float,
+    num_periods: int,
+    sample_dt_s: float,
+    settle_duration_s: float = 0.0,
+) -> List[TrajectorySample]:
+    """Build approach → hold → Fourier excitation → settle samples on a uniform grid."""
+    if approach_duration_s <= 0.0:
+        raise ValueError('approach_duration_s must be positive')
+    if hold_duration_s < 0.0:
+        raise ValueError('hold_duration_s must be non-negative')
+    if settle_duration_s < 0.0:
+        raise ValueError('settle_duration_s must be non-negative')
+    if num_periods < 1:
+        raise ValueError('num_periods must be at least 1')
+    if sample_dt_s <= 0.0:
+        raise ValueError('sample_dt_s must be positive')
+
+    excitation_duration = num_periods * trajectory.period_s
+    excitation_end_s = approach_duration_s + hold_duration_s + excitation_duration
+    total_duration = excitation_end_s + settle_duration_s
+    num_steps = int(math.floor(total_duration / sample_dt_s)) + 1
+    samples: List[TrajectorySample] = []
+
+    for step in range(num_steps):
+        time_s = min(step * sample_dt_s, total_duration)
+        position: Dict[str, float] = {}
+        velocity: Dict[str, float] = {}
+        acceleration: Dict[str, float] = {}
+
+        if time_s <= approach_duration_s:
+            alpha = time_s / approach_duration_s
+            for joint in trajectory.joints:
+                pos, vel, acc = quintic_blend(
+                    start_positions[joint],
+                    trajectory.q0[joint],
+                    alpha,
+                )
+                velocity[joint] = vel / approach_duration_s
+                acceleration[joint] = acc / (approach_duration_s * approach_duration_s)
+                position[joint] = pos
+        elif time_s <= approach_duration_s + hold_duration_s:
+            for joint in trajectory.joints:
+                position[joint] = trajectory.q0[joint]
+                velocity[joint] = 0.0
+                acceleration[joint] = 0.0
+        elif time_s < excitation_end_s:
+            excitation_time = time_s - approach_duration_s - hold_duration_s
+            sample = trajectory.sample(excitation_time)
+            position = dict(sample.position)
+            velocity = dict(sample.velocity)
+            acceleration = dict(sample.acceleration)
+        else:
+            for joint in trajectory.joints:
+                position[joint] = trajectory.q0[joint]
+                velocity[joint] = 0.0
+                acceleration[joint] = 0.0
+
+        samples.append(
+            TrajectorySample(
+                time_s=time_s,
+                position=position,
+                velocity=velocity,
+                acceleration=acceleration,
+            )
+        )
+
+    return samples
 
 
 def default_config_path() -> Path:
