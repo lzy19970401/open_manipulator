@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 8 课：OMX 摩擦辨识 — regress.py（URDF 惯性固定）</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #059669; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .theory { background: #ecfdf5; border-left-color: #059669; }
+    .warn { background: #fff7ed; border-left-color: #ea580c; }
+    .formula { font-family: var(--font-serif); margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; font-family: var(--font-sans); }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 8 课 · Issue 02（产品路线）· 约 18 分钟 ·
+    <a href="0007-omx-sysid-offline-regression.html">← 第 7 课</a> ·
+    <a href="../reference/sysid-offline-regression.html">速查表</a>
+  </p>
+
+  <h1>摩擦辨识 <code class="file">regress.py</code>：URDF 惯性 + 只估 Fv/Fc</h1>
+
+  <p class="lead">
+    第 7 课走读了「68 维标准惯性 + 摩擦」联合回归（有效秩约 30，BIP 不可靠）。
+    当前 <code class="file">regress.py</code> 已改为 ADR 混合路线：
+    <strong>惯性固定为 URDF</strong>，用 RNEA 减掉动力学，只对 <strong>8 个摩擦未知数</strong> 做最小二乘。
+  </p>
+
+  <aside class="warn">
+    <strong>与第 7 课的区别：</strong>第 7 课描述旧版 <code>computeJointTorqueRegressor</code> 全列回归；
+    本课对应当前仓库。速查表已同步更新。
+  </aside>
+
+  <aside class="theory">
+    <strong>产品语义（Calibrated dynamics model）：</strong>
+    惯性 → URDF；摩擦 → 辨识结果写入 <code>friction_estimated.yaml</code>（Phase 2 可拷到
+    <code>calibrated_dynamics.yaml</code>）。见
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a>。
+  </aside>
+
+  <h2>1. 完整模型 vs 我们实际回归什么</h2>
+
+  <p>Arm 四关节完整动力学：</p>
+  <pre class="formula">M(q) q̈ + C(q,q̇) q̇ + G(q) + F(q̇) = τ</pre>
+
+  <p>Pinocchio <code>pin.rnea(model, data, q, v, a)</code> 一次算出<strong>无摩擦</strong>的广义力矩
+  τ<sub>dyn</sub>（含 M、C、G）。摩擦单独建模：</p>
+  <pre class="formula">τ_f,i = Fv_i · q̇_i + Fc_i · sign(q̇_i)</pre>
+
+  <p>测量（或合成）力矩：</p>
+  <pre class="formula">τ_meas = τ_dyn,URDF + τ_f + noise</pre>
+
+  <p>回归时<strong>不估惯性</strong>，先减动力学：</p>
+  <pre class="formula">τ_res = τ_meas − τ_dyn,URDF = Y_fric · π_fric</pre>
+
+  <p>其中 π_fric = [Fv₁…Fv₄, Fc₁…Fc₄]ᵀ，仅 <strong>8 个未知数</strong>。</p>
+
+  <h2>2. 摩擦回归矩阵 Y_fric（4×8）</h2>
+
+  <p>每个采样时刻，对 Arm 四行方程：</p>
+  <pre>τ_res = [ q̇₁  0    0    0   | s₁  0   0   0 ] [ Fv₁ ]
+         [  0  q̇₂  0    0   |  0  s₂  0   0 ] [ Fv₂ ]
+         [  0   0  q̇₃  0   |  0   0  s₃  0 ] [ Fv₃ ]
+         [  0   0   0  q̇₄  |  0   0   0  s₄ ] [ Fv₄ ]
+                                                [ Fc₁ ]
+                                                [ Fc₂ ]
+                                                [ Fc₃ ]
+                                                [ Fc₄ ]</pre>
+
+  <p>s_i = sign(q̇_i)，|q̇_i| &lt; 1e-3 时 s_i = 0（<code>velocity_sign</code> 死区，避免静止点 sign 不定义）。</p>
+
+  <p>代码（<code>build_friction_regressor_row</code>）：</p>
+  <pre>np.hstack([
+    np.diag(arm_velocity),
+    np.diag(velocity_sign(arm_velocity)),
+])</pre>
+
+  <h2>3. 代码流水线（对照函数名）</h2>
+
+  <table class="flow">
+    <tr><th>步骤</th><th>函数</th><th>数学 / 作用</th></tr>
+    <tr>
+      <td><span class="step-num">1</span></td>
+      <td><code>load_model</code></td>
+      <td>URDF → Pinocchio model；gripper 仍在模型里，Arm 用 <code>arm_indices</code> 取四行</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">2</span></td>
+      <td><code>stack_state_from_sample</code></td>
+      <td>第 6 课 <code>TrajectorySample</code> → 全模型 q, v, a（gripper 保持 neutral 0）</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">3</span></td>
+      <td><code>dynamics_torque_arm</code></td>
+      <td>τ_dyn = <code>pin.rnea(...)[arm_indices]</code> — 固定 URDF 惯性</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">4</span></td>
+      <td><code>generate_synthetic_dataset</code></td>
+      <td>合成 τ_meas；τ_res = τ_meas − τ_dyn；堆 Y_fric 行</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">5</span></td>
+      <td><code>solve_least_squares</code></td>
+      <td>π̂ = argmin ‖Y_stack π − τ_res‖</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">6</span></td>
+      <td><code>split_friction_vector</code></td>
+      <td>π̂ 前 4 → Fv，后 4 → Fc</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">7</span></td>
+      <td><code>write_*</code></td>
+      <td>yaml + HTML 报告</td>
+    </tr>
+  </table>
+
+  <figure>
+    <svg viewBox="0 0 540 140" width="540" height="140" aria-label="摩擦辨识数据流">
+      <text x="270" y="16" text-anchor="middle" font-size="10" fill="#666" font-family="sans-serif">单时刻：从轨迹到 τ_res</text>
+      <rect x="10" y="40" width="72" height="32" fill="#ecfdf5" stroke="#059669"/>
+      <text x="46" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">sample(t)</text>
+      <path d="M 82 56 L 98 56" stroke="#333"/>
+      <rect x="98" y="40" width="72" height="32" fill="#f3f4f6" stroke="#333"/>
+      <text x="134" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">q,v,a</text>
+      <path d="M 170 56 L 186 56" stroke="#333"/>
+      <rect x="186" y="32" width="88" height="48" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="230" y="52" text-anchor="middle" font-size="8" font-family="sans-serif">RNEA</text>
+      <text x="230" y="66" text-anchor="middle" font-size="7" fill="#666" font-family="sans-serif">τ_dyn</text>
+      <path d="M 274 56 L 290 56" stroke="#333"/>
+      <rect x="290" y="40" width="80" height="32" fill="#fef3c7" stroke="#d97706"/>
+      <text x="330" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">τ_meas−τ_dyn</text>
+      <path d="M 370 56 L 386 56" stroke="#333"/>
+      <rect x="386" y="40" width="72" height="32" fill="#ede9fe" stroke="#7c3aed"/>
+      <text x="422" y="60" text-anchor="middle" font-size="8" font-family="sans-serif">Y_fric</text>
+      <text x="270" y="110" text-anchor="middle" font-size="9" fill="#555" font-family="sans-serif">lstsq 堆叠 N 个时刻 → π̂ = [Fv; Fc]</text>
+    </svg>
+    <figcaption>惯性走 RNEA「减除」；回归矩阵只含摩擦列</figcaption>
+  </figure>
+
+  <h2>4. 合成数据循环（Issue 02 示踪弹）</h2>
+
+  <p><code>generate_synthetic_dataset</code> 内层（实机/Gazebo 将来替换 τ_meas 来源即可）：</p>
+  <pre>tau_dyn = dynamics_torque_arm(...)           # URDF
+tau_friction = fv*qdot + fc*sign(qdot)       # 真值 Fv,Fc
+tau_meas = tau_dyn + tau_friction + noise
+tau_residual = tau_meas - tau_dyn            # ≈ 摩擦 + 噪声
+rows.append(build_friction_regressor_row(qdot))</pre>
+
+  <p>真值摩擦在 <code>default_synthetic_friction</code>：Fv = URDF damping + 小偏移，Fc 为常数（便于验收）。</p>
+
+  <h2>5. 最小二乘与数值指标</h2>
+
+  <pre>Y_stack ∈ R^{(4N)×8},   τ_res,stack ∈ R^{4N}
+π̂ = lstsq(Y_stack, τ_res,stack)
+residual = ‖Y_stack π̂ − τ_res,stack‖</pre>
+
+  <p><code>effective_rank_and_condition</code>：对 Y_stack 做 SVD，奇异值 &gt; 10⁻⁶·σ_max 的个数为有效秩。
+  合成 run 典型值：<strong>8/8</strong>，条件数约 <strong>9</strong>（远好于旧版 ~21000）。</p>
+
+  <table class="compact">
+    <tr><th>指标</th><th>含义</th><th>合成 run 典型</th></tr>
+    <tr><td>residual_norm</td><td>拟合 τ_res 的误差；含噪声时 ≈ √(4N)·σ_noise</td><td>~0.55（σ=0.005）</td></tr>
+    <tr><td>matrix_rank</td><td>Y 列空间维数</td><td>8</td></tr>
+    <tr><td>condition_number</td><td>σ_max / σ_rank</td><td>~9.4</td></tr>
+  </table>
+
+  <aside>
+    <strong>残差大 ≠ 摩擦估坏了：</strong>0.55 Nm 量级主要来自 12000 行上的高斯噪声能量；
+    看 <code>friction_estimated.yaml</code> 里 Fv/Fc 与 synthetic_truth 是否接近。
+  </aside>
+
+  <h2>6. 输出文件</h2>
+
+  <table class="compact">
+    <tr><th>文件</th><th>内容</th></tr>
+    <tr><td><code>inertia_nominal.yaml</code></td><td><code>use_nominal_urdf: true</code> + 各 link 10 维名义惯性（<strong>不估计</strong>）</td></tr>
+    <tr><td><code>friction_estimated.yaml</code></td><td>Fv/Fc 估计 vs URDF vs 合成真值 — <strong>主交付</strong></td></tr>
+    <tr><td><code>report.html</code></td><td>残差、8/8 秩、摩擦对照表（无 BIP 估计表）</td></tr>
+  </table>
+
+  <p><code>nominal_dynamic_parameters</code> 仅用于写 yaml 存档，用
+  <code>inertia.toDynamicParameters()</code> 导出 URDF 标准 10 参数，<strong>不参与 lstsq</strong>。</p>
+
+  <h2>7. 实机/Gazebo 时同一公式</h2>
+
+  <p>将来 bag 里只有 τ_meas、q、q̇、q̈ 时，流程不变：</p>
+  <ol>
+    <li>用 URDF + Pinocchio 算 τ_dyn,URDF(q,q̇,q̈)；</li>
+    <li>τ_res = τ_meas − τ_dyn；</li>
+    <li>同一 Y_fric、同一 lstsq。</li>
+  </ol>
+
+  <p>若 URDF 惯量系统偏大/偏小，误差会<strong>泄漏进 Fv/Fc</strong> — 混合路线的前提是信任 URDF 惯性。</p>
+
+  <h2>8. 亲手跑一遍</h2>
+
+  <pre><code>./docker/container.sh enter
+cd ~/ros2_ws
+colcon build --packages-select open_manipulator_sysid --symlink-install
+source install/setup.bash
+ros2 run open_manipulator_sysid sysid_regress_synthetic</code></pre>
+
+  <p>检查终端：<code>effective_rank: 8/8</code>；打开
+  <code>open_manipulator_sysid/results/friction_estimated.yaml</code> 对照
+  <code>Fv_synthetic_truth</code> / <code>Fc_synthetic_truth</code>。</p>
+
+  <h2>9. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>τ_res 在代码里如何得到？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. regressor 左乘 URDF 惯性向量</button></li>
+      <li><button type="button" data-answer="correct">B. τ_meas 减去 RNEA 算出的 τ_dyn</button></li>
+      <li><button type="button" data-answer="wrong">C. 仅保留 G(q) 重力项再相减</button></li>
+      <li><button type="button" data-answer="wrong">D. 对 τ_meas 做 FFT 后取低频</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>当前回归未知量个数是多少？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 60 个标准惯性参数</button></li>
+      <li><button type="button" data-answer="wrong">B. 68 个惯性加摩擦参数</button></li>
+      <li><button type="button" data-answer="correct">C. 8 个 Fv 与 Fc 标量</button></li>
+      <li><button type="button" data-answer="wrong">D. 4 个仅 Fv 标量</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>URDF 惯量明显错误时最可能发生什么？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. lstsq 无法运行</button></li>
+      <li><button type="button" data-answer="correct">B. 摩擦估计吸收动力学建模误差</button></li>
+      <li><button type="button" data-answer="wrong">C. effective_rank 变为 60</button></li>
+      <li><button type="button" data-answer="wrong">D. RNEA 抛出 SafetyViolation</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>10. 延伸阅读</h2>
+  <ul>
+    <li><strong>主参考</strong>：
+      <a href="https://doi.org/10.1017/S026357479700038X">Swevers et al., Robotica 1997</a>
+      — 激励 + 线性回归框架（摩擦子块是其中特例）。</li>
+    <li>速查：<a href="../reference/sysid-offline-regression.html">reference/sysid-offline-regression.html</a></li>
+    <li>激励轨迹：<a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a></li>
+    <li>旧版全 regressor：<a href="0007-omx-sysid-offline-regression.html">第 7 课</a>（历史对照）</li>
+    <li>源码：<code>open_manipulator_sysid/open_manipulator_sysid/regress.py</code></li>
+    <li>ADR：<a href="../docs/adr/0001-omx-sysid-approach.md">0001-omx-sysid-approach</a></li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「为什么 residual 约 0.55 但 Fv 很准？」、
+    「实机 bag 怎么接到 generate_synthetic_dataset？」或「Fc 死区 1e-3 改大会怎样？」——我会接着你的 MISSION 往下教。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0009-omx-sysid-hardware-excitation.html">第 9 课 →</a> ·
+    <a href="0007-omx-sysid-offline-regression.html">第 7 课</a> ·
+    <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="../reference/sysid-offline-regression.html">离线回归速查</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。τ_res 是测量（或合成）力矩减去 URDF 全动力学 RNEA 结果。',
+      wrong: '不对。不是重力单独减，也不是 FFT；减的是完整 τ_dyn。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。四关节各 Fv、Fc 共八个标量；惯性不再进入 lstsq。',
+      wrong: '不对。60/68 是旧版联合回归；当前仅摩擦。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。固定惯性时建模误差会表现为「假摩擦」——需信任 URDF 或做交叉验证。',
+      wrong: '不对。lstsq 仍可跑；秩仍 ≤8；RNEA 与 SafetyViolation 无关。'
+    });
+  </script>
+</body>
+</html>

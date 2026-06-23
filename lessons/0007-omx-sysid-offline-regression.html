@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 7 课：OMX 参数辨识 — 离线回归 regress.py</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #059669; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .theory { background: #ecfdf5; border-left-color: #059669; }
+    .formula { font-family: var(--font-serif); margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; font-family: var(--font-sans); }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 7 课 · Issue 02 代码走读 · 约 20 分钟 ·
+    <a href="0006-omx-sysid-excitation-trajectory.html">← 第 6 课</a> ·
+    <a href="../reference/sysid-offline-regression.html">速查表</a>
+  </p>
+
+  <h1>OpenMANIPULATOR-X 参数辨识：离线回归 <code class="file">regress.py</code></h1>
+
+  <aside class="warn" style="background:#fff7ed;border-left:3px solid #ea580c;padding:0.75rem 1rem;margin:1.5rem 0;">
+    <strong>已更新：</strong>当前 <code>regress.py</code> 改为 URDF 惯性固定、只估摩擦（8 维）。
+    请以 <a href="0008-omx-sysid-friction-regression.html">第 8 课</a> 为准；本课保留作「68 维联合回归」历史对照。
+  </aside>
+
+  <p class="lead">
+    第 6 课生成了激励轨迹 q(t), q̇, q̈。本课走读 Issue 02：
+    用 Pinocchio 把动力学写成<strong>线性回归</strong> Y·π = τ，
+    在<strong>合成数据集</strong>上最小二乘估计 <strong>BIP + Fv + Fc</strong>，
+    输出只读 yaml 与 HTML 报告。源码：
+    <code class="file">open_manipulator_sysid/regress.py</code>。
+  </p>
+
+  <aside class="theory">
+    <strong>与第 6 课的衔接：</strong>第 6 课回答「怎么动」；本课回答「动完之后，如何从 τ 反推模型参数」。
+    入口 CLI：<code>ros2 run open_manipulator_sysid sysid_regress_synthetic</code>。
+  </aside>
+
+  <h2>1. 一条命令里发生了什么？</h2>
+
+  <p><code>main()</code> → <code>run_synthetic_regression()</code> 串联四步：</p>
+
+  <table class="flow">
+    <tr><th>步骤</th><th>函数</th><th>输入 → 输出</th></tr>
+    <tr>
+      <td><span class="step-num">1</span> 建模</td>
+      <td><code>load_model()</code></td>
+      <td>URDF → Pinocchio <code>model</code>, <code>data</code>（含 arm + gripper 共 nv=6）</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">2</span> 合成数据</td>
+      <td><code>generate_synthetic_dataset()</code></td>
+      <td>第 6 课轨迹 + RNEA + 摩擦 + 噪声 → 堆叠矩阵 <code>Y</code> 与向量 <code>τ</code></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">3</span> 回归</td>
+      <td><code>solve_least_squares()</code></td>
+      <td><code>π̂ = argmin ||Yπ − τ||</code>（<code>numpy.linalg.lstsq</code>）</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">4</span> 写结果</td>
+      <td><code>write_*_yaml()</code>, <code>write_report_html()</code></td>
+      <td><code>results/bip_estimated.yaml</code>、<code>friction_estimated.yaml</code>、<code>report.html</code></td>
+    </tr>
+  </table>
+
+  <figure>
+    <svg viewBox="0 0 520 120" width="520" height="120" aria-label="离线回归数据流">
+      <text x="260" y="16" text-anchor="middle" font-size="10" fill="#666" font-family="sans-serif">run_synthetic_regression 数据流</text>
+      <rect x="10" y="35" width="70" height="36" fill="#ecfdf5" stroke="#059669"/>
+      <text x="45" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">excitation.yaml</text>
+      <rect x="95" y="35" width="70" height="36" fill="#ecfdf5" stroke="#059669"/>
+      <text x="130" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">URDF</text>
+      <path d="M 80 53 L 95 53" stroke="#333" marker-end="url(#arr)"/>
+      <path d="M 165 53 L 180 53" stroke="#333"/>
+      <rect x="180" y="28" width="100" height="46" fill="#f3f4f6" stroke="#333"/>
+      <text x="230" y="48" text-anchor="middle" font-size="9" font-family="sans-serif">generate_synthetic</text>
+      <text x="230" y="62" text-anchor="middle" font-size="8" fill="#666" font-family="sans-serif">Y, τ</text>
+      <path d="M 280 53 L 295 53" stroke="#333"/>
+      <rect x="295" y="35" width="55" height="36" fill="#fef3c7" stroke="#d97706"/>
+      <text x="322" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">lstsq</text>
+      <path d="M 350 53 L 365 53" stroke="#333"/>
+      <rect x="365" y="35" width="140" height="36" fill="#ede9fe" stroke="#7c3aed"/>
+      <text x="435" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">results/*.yaml + report.html</text>
+      <defs><marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#333"/></marker></defs>
+    </svg>
+    <figcaption>Phase 1 示踪弹：不启 Gazebo、不连实机，在 Docker 内验证「回归 → 报告」闭环</figcaption>
+  </figure>
+
+  <h2>2. 底层数学：从 M(q)q̈ + … = τ 到 Y·π = τ</h2>
+
+  <p class="formula">M(q) q̈ + C(q,q̇) q̇ + G(q) + F(q̇) = τ</p>
+
+  <p>对<strong>固定拓扑</strong>的串联臂，上式对<strong>惯性参数</strong>是线性的。Pinocchio 把惯性部分打包成标准参数向量 φ（每连杆 10 维），并给出回归矩阵：</p>
+
+  <p class="formula">τ<sub>dyn</sub> = Y<sub>dyn</sub>(q, q̇, q̈) · φ</p>
+
+  <p>代码里一行调用（<code>build_regressor_row</code>）：</p>
+  <pre>dynamic = pin.computeJointTorqueRegressor(model, data, q, velocity, acceleration)</pre>
+
+  <p>对 OMX 全 URDF，<code>Y_dyn</code> 形状为 (6, 60)：6 个速度自由度 × 6 个刚体 × 10 个标准惯性参数。
+  Phase 1 只取 Arm 四行 <code>dynamic[arm_indices, :]</code> 做辨识。</p>
+
+  <h3>2.1 摩擦项：拼进 Y 的额外列</h3>
+
+  <p>Phase 1 摩擦模型（每关节 i，不含 Jm）：</p>
+  <p class="formula">τ<sub>f,i</sub> = Fv<sub>i</sub> · q̇<sub>i</sub> + Fc<sub>i</sub> · sign(q̇<sub>i</sub>)</p>
+
+  <p>对四个 Arm 关节，把 Fv、Fc 也当作未知标量，回归矩阵横向拼接：</p>
+  <pre>Y = [ Y_dyn,arm | diag(q̇_arm) | diag(sign(q̇_arm)) ]   # 形状 (4, 60+4+4) = (4, 68)
+π = [ φ ; Fv₁…Fv₄ ; Fc₁…Fc₄ ]                            # 长度 68</pre>
+
+  <p>对应代码（<code>build_regressor_row</code>）：</p>
+  <pre>np.hstack([
+    dynamic[arm_indices, :],
+    np.diag(arm_velocity),
+    np.diag(velocity_sign(arm_velocity)),
+])</pre>
+
+  <p><code>velocity_sign</code> 在 |q̇| &lt; 1e-3 时返回 0，避免静止点 sign 不定义；这是工程近似，不是物理 stiction 模型。</p>
+
+  <h3>2.2 名义参数从哪来？</h3>
+
+  <table class="compact">
+    <tr><th>量</th><th>代码</th><th>来源</th></tr>
+    <tr><td>φ 名义（BIP）</td><td><code>nominal_dynamic_parameters()</code></td><td>各连杆 <code>model.inertias[i].toDynamicParameters()</code> 拼接</td></tr>
+    <tr><td>Fv 名义</td><td><code>nominal_friction_from_urdf()</code></td><td>URDF <code>&lt;dynamics damping&gt;</code> → <code>model.damping[joint_id]</code></td></tr>
+    <tr><td>Fc 名义</td><td>同上</td><td>URDF 无库仑项 → 报告里记 0</td></tr>
+  </table>
+
+  <aside>
+    <strong>Pinocchio 4 注意：</strong>旧版 <code>pin.standardParameters(model)</code> 已移除。
+    本仓库用 <code>toDynamicParameters()</code> 提取与 regressor 列一致的 10 维标准惯性参数
+    （mass, mc_x…mc_z, Ixx…Izz）。见
+    <a href="https://github.com/stack-of-tasks/pinocchio/blob/master/doc/Overview.md">Pinocchio Overview</a>。
+  </aside>
+
+  <h2>3. 合成数据集：已知真值 → 假装「测到了 τ」</h2>
+
+  <p>Issue 02 在接 Gazebo/实机 bag 之前，先用<strong>仿真真值</strong>验证回归流水线。循环在 <code>generate_synthetic_dataset()</code>：</p>
+
+  <ol>
+    <li>按 <code>sample_dt_s</code>（默认 0.01 s）采样 <code>num_periods</code> 个激励周期；</li>
+    <li><code>trajectory.sample(t % period)</code> 得四关节 q, q̇, q̈；</li>
+    <li><code>stack_state_from_sample</code> 填入 Pinocchio 的 q, v, a（gripper 保持 neutral=0）；</li>
+    <li><strong>真值力矩</strong>：<code>tau_full = pin.rnea(...)</code>（动力学） + Fv·q̇ + Fc·sign(q̇) + 高斯噪声；</li>
+    <li>只保留 Arm 四分量 <code>tau_arm</code>，并堆一行 <code>Y</code>。</li>
+  </ol>
+
+  <pre>tau_arm = (
+    tau_full[arm_indices]
+    + fv * arm_velocity
+    + fc * velocity_sign(arm_velocity)
+    + rng.normal(0.0, noise_std, 4)
+)</pre>
+
+  <p>合成用的摩擦真值在 <code>default_synthetic_friction()</code>：Fv = URDF damping + 小偏移，Fc 为固定常数（便于检验回归能否找回）。</p>
+
+  <aside class="theory">
+    <strong>为何用 RNEA 生成 τ 而不是 Y·φ？</strong>
+    两者在数学上等价（无噪声时 τ = Y_dyn·φ）。
+    用 RNEA 更贴近「将来从传感器读 τ」的路径；回归仍用 Y 去拟合，检验整个辨识链。
+  </aside>
+
+  <h2>4. 最小二乘与数值诊断</h2>
+
+  <p>堆叠 N 个时刻后：</p>
+  <pre>Y_stack ∈ R^{(4N) × 68} ,   τ_stack ∈ R^{4N}
+π̂ = lstsq(Y_stack, τ_stack)</pre>
+
+  <p>质量指标（<code>run_synthetic_regression</code> 末尾）：</p>
+  <ul>
+    <li><strong>残差范数</strong> <code>||Y_stack π̂ − τ_stack||</code> — 拟合好坏；</li>
+    <li><strong>有效秩</strong> <code>effective_rank_and_condition()</code> — SVD 奇异值 &gt; 1e-6·σ_max 的个数；</li>
+    <li><strong>有效条件数</strong> σ_max / σ_rank — 有限值，避免满矩阵 cond=∞。</li>
+  </ul>
+
+  <aside>
+    <strong>重要现象（4-DOF 臂）：</strong>68 列参数中<strong>只有约 30 维可辨识</strong>（有效秩 ≈ 30）。
+    大量 BIP 组合在动力学上冗余 → 单个连杆 mass 的估计值可能偏离 URDF，
+    但<strong>摩擦 Fv/Fc 通常恢复很好</strong>，且 Yπ̂ 仍能在最小二乘意义下拟合 τ。
+    报告 HTML 中已说明；Phase 1 不做 SymPy 符号重组。
+  </aside>
+
+  <h2>5. 代码地图：按函数读文件</h2>
+
+  <table class="flow">
+    <tr><th>函数</th><th>行级职责</th></tr>
+    <tr><td><code>arm_velocity_indices</code></td><td>joint1–4 在 Pinocchio v 向量中的下标</td></tr>
+    <tr><td><code>build_regressor_row</code></td><td>单行 Y：Pinocchio regressor + 摩擦列</td></tr>
+    <tr><td><code>generate_synthetic_dataset</code></td><td>时间循环 → (Y_stack, τ_stack, friction_truth)</td></tr>
+    <tr><td><code>solve_least_squares</code></td><td><code>np.linalg.lstsq</code></td></tr>
+    <tr><td><code>split_parameter_vector</code></td><td>π̂ → BIP(60) + Fv(4) + Fc(4)</td></tr>
+    <tr><td><code>write_bip_yaml</code></td><td>按 link 写 10 参数 + nominal 对照</td></tr>
+    <tr><td><code>write_friction_yaml</code></td><td>每关节 estimated / nominal / synthetic_truth</td></tr>
+    <tr><td><code>write_report_html</code></td><td>残差、条件数、名义 vs 估计表格</td></tr>
+  </table>
+
+  <h2>6. 输出文件读法</h2>
+
+  <table class="compact">
+    <tr><th>文件</th><th>用途</th></tr>
+    <tr><td><code>bip_estimated.yaml</code></td><td>估计的 60 维标准惯性参数 + <code>nominal_links</code> 对照；<strong>不写回 URDF</strong></td></tr>
+    <tr><td><code>friction_estimated.yaml</code></td><td>Fv/Fc 估计 vs URDF vs 合成真值；Phase 2 可手工拷到 <code>calibrated_dynamics.yaml</code></td></tr>
+    <tr><td><code>report.html</code></td><td>人类可读验收：残差、有效秩/条件数、两张对照表</td></tr>
+  </table>
+
+  <h2>7. 在 Docker 里亲手跑一遍</h2>
+
+  <pre><code>./docker/container.sh enter
+cd ~/ros2_ws
+colcon build --packages-select open_manipulator_sysid --symlink-install
+source install/setup.bash
+ros2 run open_manipulator_sysid sysid_regress_synthetic</code></pre>
+
+  <p>期望终端打印：<code>residual_norm</code> 有限、<code>effective_rank</code> ≈ 30、<code>condition_number</code> 有限（约 2×10⁴ 量级）。
+  打开 <code>open_manipulator_sysid/results/report.html</code>，检查摩擦估计是否接近 synthetic_truth。</p>
+
+  <h2>8. 与后续 Issue 的衔接</h2>
+
+  <table class="flow">
+    <tr><th>Issue</th><th>与本课关系</th></tr>
+    <tr><td><strong>02</strong>（本课）</td><td>合成 (q,q̇,q̈,τ) → 回归 → 报告</td></tr>
+    <tr><td><strong>03</strong> Gazebo</td><td>bag 转 dataset，复用同一套 Y 与 lstsq（<code>bag_to_dataset.py</code> 待接）</td></tr>
+    <tr><td><strong>04</strong> 实机</td><td>τ 来自 <code>joint_states.effort</code> 或 Present Current</td></tr>
+  </table>
+
+  <h2>9. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3><code>build_regressor_row</code> 在 Pinocchio 动力学矩阵后拼接了什么？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 四列关节角 q 与四列加速度 q̈</button></li>
+      <li><button type="button" data-answer="correct">B. diag(q̇) 与 diag(sign(q̇)) 共八列</button></li>
+      <li><button type="button" data-answer="wrong">C. URDF 中的 damping 常数列</button></li>
+      <li><button type="button" data-answer="wrong">D. Jm 电机惯量四列</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>合成数据里 <code>tau_arm</code> 的动力学部分如何计算？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 仅 <code>computeGeneralizedGravity</code></button></li>
+      <li><button type="button" data-answer="correct">B. <code>pin.rnea</code> 全动力学再取 arm 四行</button></li>
+      <li><button type="button" data-answer="wrong">C. <code>Y @ pi_hat</code> 用上一次回归结果</button></li>
+      <li><button type="button" data-answer="wrong">D. 常数零向量</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>4-DOF 臂上 BIP 有效秩约 30（小于 68）说明什么？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. Pinocchio regressor 实现有 bug</button></li>
+      <li><button type="button" data-answer="correct">B. 标准惯性参数存在不可辨识组合</button></li>
+      <li><button type="button" data-answer="wrong">C. 傅里叶轨迹频率选错了</button></li>
+      <li><button type="button" data-answer="wrong">D. lstsq 只能解 30 个未知数</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>10. 延伸阅读</h2>
+  <ul>
+    <li><strong>主参考（回归框架）</strong>：
+      <a href="https://doi.org/10.1017/S026357479700038X">Swevers et al., Robotica 1997</a>
+      — 激励 + 线性回归辨识经典脉络（与第 6 课同一出处）。</li>
+    <li>Pinocchio regressor：
+      <a href="https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/namespacepinocchio.html">computeJointTorqueRegressor</a></li>
+    <li>速查：<a href="../reference/sysid-offline-regression.html">reference/sysid-offline-regression.html</a></li>
+    <li>上一课：<a href="0006-omx-sysid-excitation-trajectory.html">第 6 课 激励轨迹</a></li>
+    <li>源码：<code>open_manipulator_sysid/open_manipulator_sysid/regress.py</code></li>
+    <li>术语：<code>CONTEXT.md</code> §参数辨识 · ADR
+      <a href="../docs/adr/0001-omx-sysid-approach.md">0001-omx-sysid-approach</a></li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「为什么 cond 用有效秩而不是 np.linalg.cond？」、
+    「若去掉 Fc 列 rank 会变吗？」或「帮我对照 report.html 里 joint2 的 Fv 误差」——我会按你的 MISSION 继续往下教。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="../reference/sysid-offline-regression.html">离线回归速查</a> ·
+    <a href="../reference/sysid-excitation-trajectory.html">激励轨迹速查</a> ·
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。Phase 1 把 Fv、Fc 各 4 个未知量用对角 q̇ 与 sign(q̇) 列线性化。',
+      wrong: '不对。回归自变量是参数 π，不是再拼 q/q̈；Jm 留 Phase 2。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。RNEA 含 M、C、G 全部动力学项；再叠加摩擦与噪声模拟测量。',
+      wrong: '不对。合成阶段不能用估计 π̂；也不是只做重力项。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。冗余惯性组合在 4 轴臂上不可分；看摩擦与残差更可靠。',
+      wrong: '不对。这是结构可辨识性限制，不是实现错误或 lstsq 上限。'
+    });
+  </script>
+</body>
+</html>

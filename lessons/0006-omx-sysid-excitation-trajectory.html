@@ -226,7 +226,7 @@ ros2 run open_manipulator_sysid excitation_trajectory_print --samples 5</code></
   <table class="flow">
     <tr><th>Issue</th><th>与本课关系</th></tr>
     <tr><td><strong>01</strong>（本课）</td><td>离线 q(t), q̇, q̈ + 安全校验</td></tr>
-    <tr><td><strong>02</strong> 离线回归</td><td>Pinocchio 建 Y(q,q̇,q̈)，最小二乘求 BIP+Fv+Fc</td></tr>
+    <tr><td><strong>02</strong> 离线回归</td><td>URDF 固定惯性 + 摩擦 lstsq — 见 <a href="0008-omx-sysid-friction-regression.html">第 8 课</a></td></tr>
     <tr><td><strong>03</strong> Gazebo</td><td>position 模式跟踪本轨迹，录 bag</td></tr>
     <tr><td><strong>04</strong> 实机</td><td>同上 + τ 来自 effort / Present Current</td></tr>
   </table>

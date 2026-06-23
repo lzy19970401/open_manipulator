@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 9 课：OMX 实机激励录包 — 精简架构走读</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #dc2626; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .theory { background: #fef2f2; border-left-color: #dc2626; }
+    .warn { background: #fff7ed; border-left-color: #ea580c; }
+    .new { background: #f0fdf4; border-left-color: #16a34a; }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; font-family: var(--font-sans); }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+    .quiz button { display: block; width: 100%; text-align: left; margin: 0.35rem 0; padding: 0.5rem 0.65rem; font-size: 0.88rem; }
+    .quiz-feedback { margin-top: 0.5rem; font-size: 0.88rem; }
+    .quiz-feedback.correct { color: #059669; }
+    .quiz-feedback.wrong { color: #dc2626; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 9 课 · Issue 04（2026 精简版）· 约 18 分钟 ·
+    <a href="0008-omx-sysid-friction-regression.html">← 第 8 课</a> ·
+    <a href="../reference/sysid-hardware-excitation.html">速查表</a>
+  </p>
+
+  <h1>实机激励与录包：对齐 bringup 的精简流水线</h1>
+
+  <p class="lead">
+    第 6–8 课覆盖了「怎么动」「怎么离线回归」。本课走读<strong>当前</strong>
+    <code>open_manipulator_sysid</code> 实机路径：与
+    <code>open_manipulator_x.launch.py</code> 一样复用 bringup 控制器配置，
+    只录 <code>/joint_states</code>，离线用 <code>sysid_regress_bag</code> 估摩擦。
+    重点：<strong>launch 顺序、包内还剩哪些文件、τ 从哪读</strong>。
+  </p>
+
+  <aside class="new">
+    <strong>相对旧版第 9 课的变化：</strong>已删除
+    <code>hardware_torque_enable</code>、<code>measured_torque</code>、
+    <code>robot_description.py</code>、sysid 专用 controller yaml。
+    力矩只走 <code>joint_state_broadcaster</code> 发布的
+    <code>/joint_states.effort</code>；LSB→N·m 在
+    <code>bag_to_dataset.py</code> 离线完成。
+  </aside>
+
+  <aside class="theory">
+    <strong>与 MISSION 的关系：</strong>重力补偿假设模型已知；辨识要<strong>实测 τ</strong>。
+    实机 position 模式下 effort 常为 Dynamixel Present Current 的原始 LSB，
+    离线乘以 <code>0.00479627</code> 得到 N·m 再回归。
+  </aside>
+
+  <aside class="warn">
+    <strong>前置门禁：</strong>先跑通 Gazebo（
+    <code>excitation_gazebo.launch.py</code> → bag →
+    <code>sysid_regress_bag</code>）。实机与 <strong>GC launch</strong>、
+    <strong>Standard control launch</strong> 互斥（同一 USB 口不能同时起两套）。
+  </aside>
+
+  <h2>1. 端到端命令</h2>
+
+  <p><strong>在线（容器内）：</strong></p>
+  <pre>ros2 launch open_manipulator_sysid excitation_hardware.launch.py port_name:=/dev/ttyUSB0</pre>
+
+  <p><strong>离线（与 Gazebo 相同）：</strong></p>
+  <pre>ros2 run open_manipulator_sysid sysid_regress_bag \
+  --bag open_manipulator_sysid/results/bags/hardware_&lt;时间戳&gt;</pre>
+
+  <p>可选两步：先 <code>bag_to_dataset --bag ...</code> 得到 <code>.npz</code>，
+  再 <code>sysid_regress_bag --dataset ...</code>。</p>
+
+  <pre>在线：bringup 控制器 + excitation_runner → rosbag(/joint_states)
+离线：bag → bag_to_dataset（重采样 + effort→N·m）→ regress → results/*.yaml</pre>
+
+  <h2>2. Launch 执行顺序</h2>
+
+  <p><code class="file">excitation_hardware.launch.py</code> 与
+  <code>open_manipulator_x.launch.py</code> 同构：spawner 成功后再动机械臂。</p>
+
+  <table class="flow">
+    <tr><th>顺序</th><th>动作</th><th>为什么</th></tr>
+    <tr>
+      <td><span class="step-num">1</span></td>
+      <td><code>ros2_control_node</code> + <code>robot_state_publisher</code></td>
+      <td>xacro 生成 URDF；加载 <strong>bringup</strong> 的 <code>hardware_controller_manager.yaml</code></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">2</span></td>
+      <td>spawner：<code>arm_controller</code> + <code>gripper_controller</code> + <code>joint_state_broadcaster</code></td>
+      <td>硬件 <code>on_activate</code> 后 Dynamixel 可跟踪轨迹；开始发 <code>/joint_states</code></td>
+    </tr>
+    <tr>
+      <td><span class="step-num">3</span></td>
+      <td><code>excitation_runner</code> + <code>ros2 bag record /joint_states</code></td>
+      <td>发傅里叶激励同时录 q、q̇、effort</td>
+    </tr>
+    <tr>
+      <td><span class="step-num">4</span></td>
+      <td>激励结束 → 停 bag → <code>Shutdown</code></td>
+      <td>整次 launch 干净退出</td>
+    </tr>
+  </table>
+
+  <p><code>excitation_runner</code>（与 Gazebo 相同）：读当前 q → 拼
+  「慢趋近 q₀ → hold → 傅里叶 → settle」→
+  <code>/arm_controller/follow_joint_trajectory</code>；订阅
+  <code>/joint_states</code> 做软限位 / 超速中止。</p>
+
+  <h2>3. 包内文件分工（当前）</h2>
+
+  <table class="compact">
+    <tr><th>路径</th><th>角色</th></tr>
+    <tr>
+      <td><code>launch/excitation_hardware.launch.py</code></td>
+      <td>实机 launch；控制器 yaml 来自 <code>open_manipulator_bringup</code></td>
+    </tr>
+    <tr>
+      <td><code>launch/excitation_gazebo.launch.py</code></td>
+      <td>仿真 launch；xacro <code>use_sim:=true</code>，插件内嵌 bringup yaml 路径</td>
+    </tr>
+    <tr>
+      <td><code>config/excitation.yaml</code></td>
+      <td>sysid <strong>唯一</strong>自有配置：q₀、傅里叶、approach/hold、安全上限</td>
+    </tr>
+    <tr>
+      <td><code>excitation_trajectory.py</code></td>
+      <td>纯数学：q(t)、安全校验</td>
+    </tr>
+    <tr>
+      <td><code>excitation_runner.py</code></td>
+      <td>在线 ROS 节点：发轨迹 + 安全中止</td>
+    </tr>
+    <tr>
+      <td><code>bag_to_dataset.py</code></td>
+      <td>读 bag 的 <code>/joint_states</code>；<code>arm_effort_array_to_nm()</code> 换算 τ</td>
+    </tr>
+    <tr>
+      <td><code>identification_dataset.py</code></td>
+      <td>均匀重采样、数值 q̈、数据集校验</td>
+    </tr>
+    <tr>
+      <td><code>regress.py</code> → <code>sysid_regress_bag</code></td>
+      <td>减 URDF 动力学后最小二乘估 Fv、Fc</td>
+    </tr>
+  </table>
+
+  <h2>4. 为什么复用 bringup，而不是 sysid 专用 yaml？</h2>
+
+  <ol>
+    <li><strong>实机 launch</strong> 显式加载
+      <code>open_manipulator_bringup/config/open_manipulator_x/hardware_controller_manager.yaml</code>
+      ——与日常 <code>open_manipulator_x.launch.py</code> 相同。</li>
+    <li><strong>Gazebo</strong> 的 xacro 插件参数已写死 bringup 路径；<code>use_sim:=true</code> 即可，无需 <code>robot_description.py</code> 做字符串替换。</li>
+    <li><code>joint_state_broadcaster</code> 未指定 <code>joints</code>/<code>interfaces</code> 时，会发布<strong>所有</strong> state 接口（含 effort）——实机 effort 如 <code>-102</code> 这类 LSB 会出现在 <code>/joint_states</code>。</li>
+    <li>ADR-0001 仍成立：<strong>不修改</strong> bringup 仓库里的文件；sysid 只<strong>引用</strong>。</li>
+  </ol>
+
+  <h2>5. 力矩 τ：只录一个话题</h2>
+
+  <table class="flow">
+    <tr><th>阶段</th><th>来源</th><th>说明</th></tr>
+    <tr>
+      <td>录包</td>
+      <td><code>/joint_states</code></td>
+      <td>Arm 四关节的 position、velocity、effort</td>
+    </tr>
+    <tr>
+      <td>离线</td>
+      <td><code>bag_to_dataset.arm_effort_array_to_nm()</code></td>
+      <td>若 |effort| &gt; 5 N·m 视为 LSB，× <code>0.00479627</code>；Gazebo 已是 N·m 则直通</td>
+    </tr>
+    <tr>
+      <td>回归</td>
+      <td><code>sysid_regress_bag</code></td>
+      <td>默认 trim 头 7 s、尾 2.5 s（去掉 approach/hold/settle）</td>
+    </tr>
+  </table>
+
+  <pre>τ [N·m] ≈ Present_Current_LSB × 0.00479627   （与 GC current xacro 系数一致）</pre>
+
+  <h2>6. 离线默认参数</h2>
+
+  <table class="compact">
+    <tr><th>CLI</th><th>默认</th><th>含义</th></tr>
+    <tr><td><code>--trim-start</code></td><td>7.0 s</td><td>跳过 approach(5s) + hold(2s)</td></tr>
+    <tr><td><code>--trim-end</code></td><td>2.5 s</td><td>跳过 settle hold + 余量</td></tr>
+    <tr><td><code>--dt</code></td><td>0.01 s</td><td>均匀重采样周期</td></tr>
+  </table>
+
+  <p>输出目录（默认 <code>open_manipulator_sysid/results/</code>）：</p>
+  <ul>
+    <li><code>friction_estimated.yaml</code></li>
+    <li><code>inertia_nominal.yaml</code>（URDF 对照，非估计值）</li>
+    <li><code>report.html</code></li>
+  </ul>
+
+  <h2>7. Mock 冒烟 vs 实机验收</h2>
+
+  <table class="compact">
+    <tr><th></th><th>Mock</th><th>实机</th></tr>
+    <tr>
+      <td>命令</td>
+      <td><code>use_mock_hardware:=true mock_sensor_commands:=true</code></td>
+      <td>真 USB + 人在场</td>
+    </tr>
+    <tr>
+      <td>目的</td>
+      <td>launch 链路不崩</td>
+      <td><code>report.html</code> 中 Fv/Fc 有限、无 NaN</td>
+    </tr>
+    <tr>
+      <td>effort</td>
+      <td>常为 0 或假值</td>
+      <td>应为非零 LSB 或已换算的 N·m</td>
+    </tr>
+  </table>
+
+  <h2>8. 自测（检索练习）</h2>
+
+  <div class="quiz" id="quiz1">
+    <p><strong>Q1.</strong> 为什么 <code>excitation_runner</code> 要在 spawner <strong>之后</strong>？</p>
+    <button data-answer="wrong">因为 bag record 必须先于控制器启动</button>
+    <button data-answer="correct">因为 arm_controller 未加载时 FollowJointTrajectory 会被拒绝</button>
+    <button data-answer="wrong">因为必须先调用 set_dxl_torque 服务</button>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <p><strong>Q2.</strong> 实机录包时应该录哪个话题拿 τ？</p>
+    <button data-answer="wrong">/sysid/measured_joint_torque</button>
+    <button data-answer="correct">/joint_states 的 effort 字段</button>
+    <button data-answer="wrong">dynamixel_hardware_interface/dxl_state</button>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <p><strong>Q3.</strong> sysid 包里的控制器 yaml 放在哪？</p>
+    <button data-answer="wrong">config/controller_manager_hardware.yaml</button>
+    <button data-answer="correct">复用 bringup；sysid 仅保留 excitation.yaml</button>
+    <button data-answer="wrong">写在 open_manipulator_description 的 URDF 里</button>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>9. 主参考</h2>
+  <ul>
+    <li>ADR：<a href="../docs/adr/0001-omx-sysid-approach.md">0001-omx-sysid-approach.md</a>（独立包、不改 bringup 文件）</li>
+    <li>术语：<a href="../CONTEXT.md">CONTEXT.md</a> §参数辨识</li>
+    <li>bringup 对照：<code>open_manipulator_bringup/launch/open_manipulator_x.launch.py</code></li>
+    <li>离线回归：<a href="0008-omx-sysid-friction-regression.html">第 8 课</a> ·
+      <a href="../reference/sysid-offline-regression.html">离线速查</a></li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「<code>excitation_hardware.launch.py</code> 和 bringup launch 差在哪？」、
+    「为什么 effort 是 -102 这种大数？」或
+    「帮我看 bag 能不能直接 sysid_regress_bag」——我会按你的学习记录继续教。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0008-omx-sysid-friction-regression.html">第 8 课</a> ·
+    <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="../reference/sysid-hardware-excitation.html">实机速查</a> ·
+    <a href="../reference/sysid-offline-regression.html">离线回归速查</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。spawner 激活 arm_controller 后 action server 才可用。',
+      wrong: '不对。与录包先后或已删除的 torque 服务无关。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。精简后只录 /joint_states；离线再换算 N·m。',
+      wrong: '不对。measured 话题与 dxl_state 直连已移除。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。bringup 管控制器；sysid 只管激励与离线回归。',
+      wrong: '不对。专用 controller yaml 已删除，URDF 也不手写 yaml。'
+    });
+  </script>
+</body>
+</html>
