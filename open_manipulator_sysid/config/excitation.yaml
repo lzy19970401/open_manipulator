@@ -40,8 +40,14 @@ safety:
   soft_limit_inset_fraction: 0.1
   max_velocity_rad_s: 1.0
   max_acceleration_rad_s2: 2.0
+  # Extra tolerance on live /joint_states velocity abort (Dynamixel noise).
+  velocity_abort_margin_rad_s: 0.05
 
-# Used by online excitation nodes (Issue 03+); not consumed by offline generator yet.
+# Used by online excitation nodes (Issue 03+).
 approach:
   duration_s: 5.0
+  hold_duration_s: 2.0
+
+# Stationary hold at q₀ after excitation (JointTrajectoryController requires zero end velocity).
+settle:
   hold_duration_s: 2.0
