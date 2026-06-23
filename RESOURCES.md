@@ -43,5 +43,7 @@
 
 - [Swevers et al. — Optimal robot excitation for parameter identification (Robotica 1997)](https://doi.org/10.1017/S026357479700038X)
   多频傅里叶激励与可辨识性经典参考。Use for: Issue 01 激励轨迹设计依据。
+- [Pinocchio: computeJointTorqueRegressor](https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/namespacepinocchio.html)
+  动力学回归矩阵 Y(q,q̇,q̈)。Use for: Issue 02 `regress.py`。
 - 仓库内：`.scratch/open-manipulator-x-sysid/PRD.md`、`docs/adr/0001-omx-sysid-approach.md`
   OMX sysid 独立包路线。Use for: 与 GC 配置隔离、Gazebo-first 流程。
