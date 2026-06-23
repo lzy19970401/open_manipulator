@@ -10,6 +10,9 @@ from open_manipulator_sysid.excitation_trajectory import (
     ExcitationTrajectory,
     SafetyViolation,
     default_config_path,
+    peak_approach_velocities,
+    required_approach_duration,
+    validate_approach_segment,
 )
 
 
@@ -38,6 +41,7 @@ def test_config_matches_prd_defaults() -> None:
     assert config['safety']['soft_limit_inset_fraction'] == 0.1
     assert config['safety']['max_velocity_rad_s'] == 1.0
     assert config['safety']['max_acceleration_rad_s2'] == 2.0
+    assert config['safety']['velocity_abort_margin_rad_s'] == 0.05
 
 
 def test_trajectory_starts_at_q0() -> None:
@@ -73,3 +77,49 @@ def test_validate_sample_detects_velocity_violation() -> None:
     trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH, amplitude_scale=10.0)
     with pytest.raises(SafetyViolation):
         trajectory.validate_period(num_samples=100)
+
+
+def test_required_approach_duration_scales_with_delta() -> None:
+    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
+    q0 = trajectory.q0
+    start = {joint: q0[joint] for joint in ARM_JOINTS}
+    start['joint1'] = q0['joint1'] + 3.0
+
+    duration = required_approach_duration(
+        start,
+        q0,
+        joints=ARM_JOINTS,
+        max_velocity=trajectory._max_velocity,
+        min_duration_s=5.0,
+    )
+    assert duration > 5.0
+    peaks = peak_approach_velocities(
+        start,
+        q0,
+        joints=ARM_JOINTS,
+        approach_duration_s=duration,
+    )
+    assert peaks['joint1'] <= trajectory._max_velocity + 1e-9
+
+
+def test_approach_segment_respects_velocity_cap() -> None:
+    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
+    q0 = trajectory.q0
+    start = {joint: q0[joint] for joint in ARM_JOINTS}
+    start['joint1'] = q0['joint1'] + 3.0
+
+    duration = required_approach_duration(
+        start,
+        q0,
+        joints=ARM_JOINTS,
+        max_velocity=trajectory._max_velocity,
+        min_duration_s=5.0,
+    )
+    validate_approach_segment(
+        start,
+        q0,
+        joints=ARM_JOINTS,
+        approach_duration_s=duration,
+        max_velocity=trajectory._max_velocity,
+        max_acceleration=trajectory._max_acceleration,
+    )
