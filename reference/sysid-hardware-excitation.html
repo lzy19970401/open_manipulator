@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参考：Sysid 实机激励与录包（精简版）</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; vertical-align: top; }
+    dl.ref dt { font-family: var(--font-sans); font-weight: 600; margin-top: 0.75rem; }
+    dl.ref dd { margin-left: 0; color: var(--muted); font-size: 0.92rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">速查 · 对应 <a href="../lessons/0009-omx-sysid-hardware-excitation.html">第 9 课</a></p>
+
+  <h1>实机激励录包 · 精简架构</h1>
+
+  <h2>启动顺序</h2>
+  <pre>ros2_control_node + robot_state_publisher
+  （bringup hardware_controller_manager.yaml）
+  → spawner: arm_controller + gripper_controller + joint_state_broadcaster
+  → excitation_runner + ros2 bag record (/joint_states)
+  → 停 bag → Shutdown</pre>
+
+  <h2>录包</h2>
+  <table class="compact">
+    <tr><th>话题</th><th>内容</th></tr>
+    <tr><td><code>/joint_states</code></td><td>q, q̇, effort（实机 effort 常为 Dynamixel LSB）</td></tr>
+  </table>
+
+  <h2>离线 τ 换算（bag_to_dataset）</h2>
+  <pre>若 max|effort| &gt; 5 → 视为 LSB：τ [N·m] = effort × 0.00479627
+否则视为已是 N·m（Gazebo）</pre>
+
+  <h2>包内文件</h2>
+  <table class="compact">
+    <tr><th>文件</th><th>职责</th></tr>
+    <tr><td><code>launch/excitation_hardware.launch.py</code></td><td>实机编排；复用 bringup 控制器 yaml</td></tr>
+    <tr><td><code>launch/excitation_gazebo.launch.py</code></td><td>Gazebo；xacro use_sim + bringup 插件路径</td></tr>
+    <tr><td><code>config/excitation.yaml</code></td><td>唯一 sysid 配置（q₀、傅里叶、安全）</td></tr>
+    <tr><td><code>excitation_runner.py</code></td><td>在线轨迹 + 安全中止</td></tr>
+    <tr><td><code>bag_to_dataset.py</code></td><td>bag → 数据集 + effort→N·m</td></tr>
+    <tr><td><code>regress.py</code></td><td><code>sysid_regress_bag</code> 摩擦回归</td></tr>
+  </table>
+
+  <h2>CLI</h2>
+  <dl class="ref">
+    <dt>实机激励</dt>
+    <dd><code>ros2 launch open_manipulator_sysid excitation_hardware.launch.py port_name:=/dev/ttyUSB0</code></dd>
+    <dt>Mock</dt>
+    <dd><code>... use_mock_hardware:=true mock_sensor_commands:=true</code></dd>
+    <dt>离线回归</dt>
+    <dd><code>ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/&lt;run&gt;</code></dd>
+    <dt>可选：先转 npz</dt>
+    <dd><code>ros2 run open_manipulator_sysid bag_to_dataset --bag results/bags/&lt;run&gt;</code></dd>
+  </dl>
+
+  <h2>安全 / 互斥</h2>
+  <ul>
+    <li>与 GC launch、Standard control launch 互斥（同 USB）</li>
+    <li>操作者在场；<code>excitation_runner</code> 软限位 / 超速中止</li>
+    <li>前置：Gazebo 闭环通过</li>
+  </ul>
+
+  <nav class="lesson-nav">
+    <a href="../lessons/0009-omx-sysid-hardware-excitation.html">第 9 课</a> ·
+    <a href="../lessons/0008-omx-sysid-friction-regression.html">第 8 课</a> ·
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a>
+  </nav>
+</body>
+</html>

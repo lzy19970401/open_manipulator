@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参考：Sysid 离线回归 regress.py</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .formula { font-family: var(--font-serif); margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+    dl.ref dt { font-family: var(--font-sans); font-weight: 600; margin-top: 0.75rem; }
+    dl.ref dd { margin-left: 0; color: var(--muted); font-size: 0.92rem; }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; font-family: var(--font-sans); }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">速查 · 对应 <a href="../lessons/0008-omx-sysid-friction-regression.html">第 8 课</a>
+    · <a href="../lessons/0007-omx-sysid-offline-regression.html">第 7 课（旧版）</a></p>
+
+  <h1>离线回归 · 公式与代码对照</h1>
+
+  <h2>线性回归目标（固定 URDF 惯性）</h2>
+  <p class="formula">τ<sub>meas</sub> = τ<sub>dyn,URDF</sub>(q,q̇,q̈) + Y<sub>fric</sub> · π<sub>fric</sub></p>
+  <p class="formula">τ<sub>res</sub> = τ<sub>meas</sub> − τ<sub>dyn,URDF</sub> = Y<sub>fric</sub> · π<sub>fric</sub></p>
+  <p class="formula">π<sub>fric</sub> = [ Fv₁…Fv₄ ; Fc₁…Fc₄ ]</p>
+  <p class="formula">Y<sub>fric</sub> = [ diag(q̇) | diag(sign(q̇)) ]  →  (4 × 8)</p>
+
+  <h2>Pinocchio 调用</h2>
+  <pre>τ_dyn = pin.rnea(model, data, q, v, a)[arm_indices]
+τ_res = τ_meas - τ_dyn
+Y_fric = [diag(q̇_arm), diag(sign(q̇_arm))]
+π̂_fric = lstsq(Y_stack, τ_res_stack)</pre>
+
+  <h2>合成数据（Issue 02）</h2>
+  <pre>τ_meas = rnea[arm] + Fv·q̇ + Fc·sign(q̇) + noise
+τ_res = τ_meas - rnea[arm]
+π̂ = lstsq(Y_fric_stack, τ_res_stack)   # 8 unknowns
+residual = ||Y_fric·π̂ − τ_res||</pre>
+
+  <h2>数值诊断</h2>
+  <table class="compact">
+    <tr><th>量</th><th>代码</th><th>典型 OMX 合成 run</th></tr>
+    <tr><td>未知数</td><td>Fv + Fc per joint</td><td>8</td></tr>
+    <tr><td>有效秩</td><td><code>effective_rank_and_condition</code></td><td>≤ 8</td></tr>
+    <tr><td>条件数</td><td>σ_max / σ_rank（非满秩 cond）</td><td>≈ 9（合成默认）</td></tr>
+    <tr><td>sign 死区</td><td><code>VELOCITY_SIGN_EPS = 1e-3</code></td><td>|q̇|&lt;ε → 0</td></tr>
+  </table>
+
+  <h2>CLI</h2>
+  <pre>ros2 run open_manipulator_sysid sysid_regress_synthetic</pre>
+
+  <h2>输出（gitignored）</h2>
+  <dl class="ref">
+    <dt>inertia_nominal.yaml</dt><dd>URDF 名义惯性（固定，不估计）</dd>
+    <dt>friction_estimated.yaml</dt><dd>Fv/Fc 估计 vs URDF vs 合成真值</dd>
+    <dt>report.html</dt><dd>残差、有效秩/条件数、摩擦对照表</dd>
+  </dl>
+
+  <h2>代码入口</h2>
+  <dl class="ref">
+    <dt>主管线</dt><dd><code>run_synthetic_regression()</code></dd>
+    <dt>堆 Y, τ_res</dt><dd><code>generate_synthetic_dataset()</code></dd>
+    <dt>动力学减除</dt><dd><code>dynamics_torque_arm()</code> (RNEA)</dd>
+    <dt>单行 Y_fric</dt><dd><code>build_friction_regressor_row()</code></dd>
+    <dt>解 π</dt><dd><code>solve_least_squares()</code></dd>
+  </dl>
+
+  <nav class="lesson-nav">
+    <a href="../lessons/0008-omx-sysid-friction-regression.html">第 8 课</a> ·
+    <a href="../lessons/0007-omx-sysid-offline-regression.html">第 7 课（旧）</a> ·
+    <a href="../lessons/0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="sysid-excitation-trajectory.html">激励轨迹速查</a> ·
+    <a href="../CONTEXT.md">CONTEXT</a>
+  </nav>
+
+</body>
+</html>
