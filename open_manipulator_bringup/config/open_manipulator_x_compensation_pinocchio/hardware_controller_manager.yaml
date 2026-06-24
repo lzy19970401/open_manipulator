@@ -1,0 +1,48 @@
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 100  # Hz — OMX USB 1 Mbps read ~5 ms
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+
+      pinocchio_gravity_compensation_controller:
+        type: pinocchio_gravity_compensation_controller/PinocchioGravityCompensationController
+
+/**:
+  pinocchio_gravity_compensation_controller:
+    ros__parameters:
+      joints:
+        - joint1
+        - joint2
+        - joint3
+        - joint4
+      passive_state_joints:
+        - gripper_left_joint
+      command_interfaces:
+        - effort
+      state_interfaces:
+        - position
+        - velocity
+      effort_sign_flips:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+      torque_scaling_factors:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+      enable_friction_compensation: false
+      viscous_friction_coefficients:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      coulomb_friction_coefficients:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      friction_velocity_deadzone: 0.001
