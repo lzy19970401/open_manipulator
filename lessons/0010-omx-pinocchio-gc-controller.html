@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 10 课：Pinocchio GC 控制器代码逻辑</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #2563eb; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 10 课 · Pinocchio GC 插件走读 · 约 18 分钟 ·
+    <a href="0003-pinocchio-gravity-compensation.html">← 第 3 课</a> ·
+    <a href="0005-omx-gravity-compensation-implementation.html">第 5 课（KDL 版）</a>
+  </p>
+
+  <h1>OpenMANIPULATOR-X：Pinocchio 重力补偿控制器代码逻辑</h1>
+
+  <p class="lead">
+    <a href="0003-pinocchio-gravity-compensation.html">第 3 课</a> 讲独立脚本里怎么算 g(q)；
+    <a href="0005-omx-gravity-compensation-implementation.html">第 5 课</a> 走读 KDL 版 ros2_control 链路。
+    本课聚焦<strong>已落地的 Pinocchio 并行栈</strong>——
+    <code class="file">om_pinocchio_gravity_compensation_controller</code> 里
+    「读 q → 算 G(q) → 写 effort」每一帧在做什么。
+  </p>
+
+  <aside>
+    <strong>与 KDL 栈的关系：</strong>两套 launch / yaml / 插件<strong>互斥并行</strong>，不修改
+    <code>om_gravity_compensation_controller</code>。术语见
+    <a href="../CONTEXT.md">CONTEXT.md</a> 中 <em>Pinocchio gravity compensation control mode</em>。
+  </aside>
+
+  <h2>1. 文件地图（Issue 01 交付物）</h2>
+
+  <table class="flow">
+    <tr><th>层</th><th>路径</th><th>职责</th></tr>
+    <tr>
+      <td>插件</td>
+      <td><code class="file">ros2_controller/om_pinocchio_gravity_compensation_controller/</code></td>
+      <td>C++ <code>controller_interface</code> 插件；Pinocchio 算 G(q)</td>
+    </tr>
+    <tr>
+      <td>配置</td>
+      <td><code class="file">config/open_manipulator_x_compensation_pinocchio/hardware_controller_manager.yaml</code></td>
+      <td>注册 <code>pinocchio_gravity_compensation_controller</code>，100 Hz</td>
+    </tr>
+    <tr>
+      <td>Launch</td>
+      <td><code class="file">open_manipulator_x_pinocchio_gravity_compensation.launch.py</code></td>
+      <td>effort 型 xacro + spawner + 实机关机 torque disable</td>
+    </tr>
+    <tr>
+      <td>离线校验</td>
+      <td><code class="file">test/test_gravity_parity.cpp</code></td>
+      <td>Init / Home / Ready 三姿态 Pinocchio vs KDL，|Δg| &lt; 1e-2 N·m</td>
+    </tr>
+  </table>
+
+  <h2>2. 一帧 update() 的数据流</h2>
+
+  <figure>
+    <svg viewBox="0 0 520 120" width="520" height="120" aria-label="Pinocchio GC 单帧数据流">
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#333"/></marker></defs>
+      <rect x="8" y="42" width="88" height="36" fill="#eee" stroke="#333"/>
+      <text x="52" y="64" text-anchor="middle" font-size="9" font-family="sans-serif">state IF</text>
+      <text x="52" y="76" text-anchor="middle" font-size="8" font-family="sans-serif">q, q̇, gripper</text>
+      <line x1="96" y1="60" x2="118" y2="60" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="120" y="42" width="100" height="36" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="170" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">fill q</text>
+      <text x="170" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">+ mimic 镜像</text>
+      <line x1="220" y1="60" x2="242" y2="60" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="244" y="42" width="120" height="36" fill="#dcfce7" stroke="#15803d"/>
+      <text x="304" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">compute</text>
+      <text x="304" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">GeneralizedGravity</text>
+      <line x1="364" y1="60" x2="386" y2="60" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="388" y="42" width="120" height="36" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="448" y="58" text-anchor="middle" font-size="9" font-family="sans-serif">sign × scale</text>
+      <text x="448" y="72" text-anchor="middle" font-size="8" font-family="sans-serif">→ effort IF</text>
+    </svg>
+    <figcaption>100 Hz 循环：只写 Arm 四关节 effort；Gripper 只读 position 参与 q</figcaption>
+  </figure>
+
+  <p>核心公式（Issue 01 纯重力，摩擦默认关）：</p>
+  <pre><code>τ_cmd_i = effort_sign_flips_i × torque_scaling_factors_i × G_i(q)</code></pre>
+
+  <h2>3. 生命周期：四段代码各干什么</h2>
+
+  <h3><span class="step-num">A</span> on_configure — 建模型、建索引（只做一次）</h3>
+
+  <ol>
+    <li>读参数：<code>joints</code>（Arm 四关节）、<code>passive_state_joints</code>（至少 <code>gripper_left_joint</code>）</li>
+    <li>从 <code>get_robot_description()</code> 取 URDF 字符串 → <code>pinocchio::urdf::buildModelFromXML</code></li>
+    <li>为每个 ros2_control 关节名查 Pinocchio 的 <code>idx_q</code>（填 q）和 <code>idx_v</code>（读 G 的分量）</li>
+  </ol>
+
+  <pre><code>pinocchio::urdf::buildModelFromXML(urdf, model_);
+data_ = std::make_unique&lt;pinocchio::Data&gt;(model_);
+
+const pinocchio::JointIndex joint_id = model_.getJointId("joint1");
+arm_velocity_indices_.push_back(model_.joints[joint_id].idx_v());
+arm_configuration_indices_.push_back(model_.joints[joint_id].idx_q());</code></pre>
+
+  <aside>
+    <strong>idx_q vs idx_v：</strong>OMX 全是 1-DoF 关节，两者数值常相同，但 API 上
+    <code>q</code> 用 idx_q，<code>data.g</code> 按速度空间 idx_v 索引——混用会 silent wrong。
+  </aside>
+
+  <h3><span class="step-num">B</span> command / state interface 声明 — 谁被命令、谁只读</h3>
+
+  <table class="flow">
+    <tr><th>关节</th><th>command</th><th>state</th></tr>
+    <tr><td>joint1–joint4</td><td><code>effort</code></td><td><code>position</code>, <code>velocity</code></td></tr>
+    <tr><td>gripper_left_joint</td><td>（无）</td><td><code>position</code> 只读</td></tr>
+  </table>
+
+  <p>
+    <code>command_interface_configuration()</code> 只列出 Arm；
+    <code>state_interface_configuration()</code> 额外加上 passive 夹爪的 position。
+    Gripper 仍由硬件侧 position/current 模式控制，GC 插件不碰其 effort。
+  </p>
+
+  <h3><span class="step-num">C</span> fill_configuration_vector — 组装完整 q</h3>
+
+  <pre><code>q = pinocchio::neutral(model_);
+q[arm_configuration_indices_[i]]   = arm_state position;
+q[passive_configuration_indices_] = gripper_left position;
+
+// 实机 ros2_control 无 gripper_right 状态 → 按 URDF mimic 镜像
+q[idx_q(gripper_right)] = q[idx_q(gripper_left)];</code></pre>
+
+  <p>
+    Pinocchio 模型 nq=6（四旋转 + 两棱柱夹爪指）。夹爪质量会影响 Arm 上 G(q)；
+    若只填 Arm 四关节、忽略夹爪，腕部力矩会偏差。
+    实机只暴露 Master finger，所以在代码里<strong>显式 mirror Mimic finger</strong>。
+  </p>
+
+  <h3><span class="step-num">D</span> update() — 算力矩并下发</h3>
+
+  <pre><code>pinocchio::computeGeneralizedGravity(model_, *data_, q);
+
+for each arm joint i:
+  tau_phys = data_-&gt;g[arm_velocity_indices_[i]];
+  // enable_friction_compensation 时叠加 Fv·q̇ + Fc·sign_ε(q̇)（Issue 02）
+  effort = effort_sign_flips[i] * torque_scaling_factors[i] * tau_phys;
+  joint_command_interface_[0][i].set_value(effort);</code></pre>
+
+  <p>
+    与 KDL 版不同：这里<strong>直接调用</strong>
+    <a href="https://docs.ros.org/en/humble/p/pinocchio/generated/function_namespacepinocchio_1a79736c0fe06fdd6fc64ab02be0503785.html"><code>computeGeneralizedGravity</code></a>，
+    不用 RNEA + 把 q̇/q̈ 置零的间接写法；也不订阅 <code>/collision_flag</code> 或 follower <code>/joint_states</code>。
+  </p>
+
+  <h3><span class="step-num">E</span> on_deactivate — 安全清零</h3>
+  <p>四个 Arm effort 接口全部 <code>set_value(0.0)</code>，配合 launch 退出时的 <code>gc_shutdown_torque_disable</code>。</p>
+
+  <h2>4. 与 KDL 控制器对照（同一 ros2_control 模式，不同后端）</h2>
+
+  <table class="flow">
+    <tr><th>维度</th><th>KDL <code>om_gravity_compensation_controller</code></th><th>Pinocchio 本插件</th></tr>
+    <tr><td>动力学</td><td><code>TreeIdSolver_RNE</code> + 摩擦/heuristic</td><td><code>computeGeneralizedGravity</code></td></tr>
+    <tr><td>完整 q</td><td>仅填 Arm 四关节进 KDL q</td><td>Arm + 夹爪 + mimic 镜像</td></tr>
+    <tr><td>额外订阅</td><td>collision_flag、follower joint_states</td><td>无</td></tr>
+    <tr><td>摩擦</td><td>kinetic/static scalar + dither</td><td>Fv/Fc 线性模型（默认关）</td></tr>
+    <tr><td>Launch</td><td><code>open_manipulator_x_gravity_compensation.launch.py</code></td><td><code>..._pinocchio_gravity_compensation.launch.py</code></td></tr>
+  </table>
+
+  <h2>5. 动手：读源码时的检查清单</h2>
+
+  <ol>
+    <li>打开 <code>pinocchio_gravity_compensation_controller.cpp</code>，找到 <code>update()</code> — 确认只有一条 Pinocchio 动力学调用</li>
+    <li>在 <code>on_configure</code> 看日志 <code>nq=6 nv=6 arm joints=4 passive=1</code></li>
+    <li>Mock 启动：<code>ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_gravity_compensation.launch.py use_mock_hardware:=true</code></li>
+    <li>跑 parity 测试：<code>colcon test --packages-select om_pinocchio_gravity_compensation_controller</code></li>
+  </ol>
+
+  <h2>6. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>Pinocchio 插件从哪读当前关节角 q？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 订阅 /joint_states 话题回调</button></li>
+      <li><button type="button" data-answer="correct">B. ros2_control 借用的 state interface</button></li>
+      <li><button type="button" data-answer="wrong">C. 每帧重新 parse URDF 文件</button></li>
+      <li><button type="button" data-answer="wrong">D. MoveIt 当前规划组关节值</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>实机为何要在 fill q 时镜像 gripper_right？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. Pinocchio 不支持 mimic 关节</button></li>
+      <li><button type="button" data-answer="correct">B. 硬件只暴露主指状态需补全 q</button></li>
+      <li><button type="button" data-answer="wrong">C. 从指也要接收 effort 命令</button></li>
+      <li><button type="button" data-answer="wrong">D. URDF 里缺少从指惯性参数</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>update() 里 G_i(q) 从 data.g 的哪个索引取？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 与 yaml 里 joints 列表下标相同</button></li>
+      <li><button type="button" data-answer="correct">B. 该关节在 Pinocchio 里的 idx_v</button></li>
+      <li><button type="button" data-answer="wrong">C. Dynamixel ID 减 11 的偏移</button></li>
+      <li><button type="button" data-answer="wrong">D. 固定取 data.g 前四个元素</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <h2>7. 延伸阅读</h2>
+  <ul>
+    <li>速查：<a href="../reference/pinocchio-gc-controller-flow.html">Pinocchio GC 控制器流程速查</a></li>
+    <li>API 概念：<a href="0003-pinocchio-gravity-compensation.html">第 3 课</a></li>
+    <li>KDL 工程对照：<a href="0005-omx-gravity-compensation-implementation.html">第 5 课</a></li>
+    <li>源码：<code>ros2_controller/om_pinocchio_gravity_compensation_controller/src/pinocchio_gravity_compensation_controller.cpp</code></li>
+    <li>Pinocchio 官方：<a href="https://github.com/stack-of-tasks/pinocchio/blob/master/doc/Overview.md">Overview — URDF + 逆动力学</a></li>
+  </ul>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「带我从 on_configure 跟到第一帧 update」、
+    「为什么 parity 测试要用 KDL TreeIdSolver 而不是 JntToGravity？」或
+    「effort_sign_flips 该在哪一层调？」——Agent 是你的老师。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0003-pinocchio-gravity-compensation.html">第 3 课</a> ·
+    <a href="0005-omx-gravity-compensation-implementation.html">第 5 课</a> ·
+    <a href="../reference/pinocchio-gc-controller-flow.html">速查</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。与第 5 课相同：loaned state interface，不是 topic 订阅。',
+      wrong: '不对。控制器在 update 里读 hardware 填好的 interface。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。ros2_control 实机只读 gripper_left；Pinocchio 模型仍有两指 DoF。',
+      wrong: '不对。Pinocchio 能解析 mimic；缺的是运行时状态，不是 URDF。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。configure 时缓存 model.joints[id].idx_v()，避免每帧查表。',
+      wrong: '不对。Pinocchio 的 g 向量按 nv 布局，不能假设与 yaml 顺序相同。'
+    });
+  </script>
+</body>
+</html>

@@ -8,9 +8,9 @@
 
 - 给定四个关节角，能解释末端大致位置（FK 直觉）
 - 理解 Wrench / 空间六维量与 τ = JᵀF 的静力关系
-- **从 URDF 构建 Pinocchio Model，调用 `computeGeneralizedGravity` 得到 g(q)**
-- **说清 ROBOTIS KDL 版与 Pinocchio 版的控制环差异（effort 接口、URDF 链、仿真前置条件）**
-- 能在独立示例程序里验证 g(q) 数量级，并知道如何接到 ros2_control（概念层）
+- **从 URDF 构建 Pinocchio Model，调用 `computeGeneralizedGravity` 得到 g(q)** ✓（独立示例 + `om_pinocchio_gravity_compensation_controller` 插件）
+- **说清 ROBOTIS KDL 版与 Pinocchio 版的控制环差异（effort 接口、URDF 链、仿真前置条件）** ✓（见第 5 课、第 10 课）
+- 能在独立示例程序里验证 g(q) 数量级，并知道如何接到 ros2_control（概念层） ✓（第 10 课走读已落地插件）
 
 ## Constraints
 
@@ -20,6 +20,6 @@
 
 ## Out of scope
 
-- 完整 ros2_control 控制器插件实现（本课给架构与独立示例）
+- 完整 ros2_control 控制器插件实现（KDL 栈已有；Pinocchio 并行栈见第 10 课 / Issue 01）
 - 摩擦补偿、leader-follower 同步（见现有 `om_gravity_compensation_controller`）
 - 其它型号独立推导

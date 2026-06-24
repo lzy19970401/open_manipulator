@@ -84,6 +84,10 @@ _Avoid_: normal mode, position launch（未与 GC launch 区分时）
 通过独立 launch 启动的互斥配置：Arm 四关节（`joint1`–`joint4`）走 **effort** 接口，控制器前馈 τ≈g(q)，使 Arm 近似反驱动、可用手示教；**不含**轨迹录制；退出时 effort 清零并 **Torque disable**。与 Standard control launch 二选一，不可同时加载。操作说明见 [docs/open-manipulator-x-gravity-compensation.md](docs/open-manipulator-x-gravity-compensation.md)。
 _Avoid_: GC mode（未限定型号时）、leader mode（OMX 无 follower 同步）
 
+**Pinocchio gravity compensation control mode（Pinocchio 重力补偿控制模式）**:
+与 **Gravity compensation control mode** 并行、互斥的另一套 GC 栈：动力学后端为 Pinocchio，配置目录为 `open_manipulator_x_compensation_pinocchio`；前馈 τ≈G(q) 并可选用辨识得到的 Fv/Fc 摩擦补偿；独立 launch 与控制器插件，不修改既有 KDL GC 路径。
+_Avoid_: Phase 2 backend swap（指在原 KDL 控制器内替换后端时）、pinocchio GC（未与 KDL GC 区分时）
+
 **Torque enable（力矩使能）**:
 Dynamixel 舵机是否输出 holding torque 的安全开关；禁用时关节可手动拖动，启用时执行位置/电流控制。
 _Avoid_: motor on/off, power

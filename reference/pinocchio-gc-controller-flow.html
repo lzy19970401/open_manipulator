@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：Pinocchio GC 控制器流程</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 38rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #eee; padding: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    th, td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta"><a href="../lessons/0010-omx-pinocchio-gc-controller.html">← 第 10 课</a></p>
+  <h1>Pinocchio GC 控制器流程速查</h1>
+
+  <h2>包与插件</h2>
+  <table>
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>包</td><td><code>om_pinocchio_gravity_compensation_controller</code></td></tr>
+    <tr><td>插件类型</td><td><code>pinocchio_gravity_compensation_controller/PinocchioGravityCompensationController</code></td></tr>
+    <tr><td>配置目录</td><td><code>open_manipulator_x_compensation_pinocchio</code></td></tr>
+    <tr><td>Launch</td><td><code>open_manipulator_x_pinocchio_gravity_compensation.launch.py</code></td></tr>
+  </table>
+
+  <h2>生命周期</h2>
+  <pre>on_configure:
+  buildModelFromXML(robot_description) → Model + Data
+  缓存 idx_q / idx_v（Arm + passive gripper）
+
+on_activate:
+  绑定 effort command（Arm）
+  绑定 position/velocity state（Arm）
+  绑定 position state（gripper_left）
+
+update @ 100 Hz:
+  fill q（Arm + gripper_left + mimic gripper_right）
+  computeGeneralizedGravity → data.g
+  τ_cmd = sign × scale × G_i(q)  [+ 可选 Fv/Fc]
+  set effort command
+
+on_deactivate:
+  Arm effort → 0</pre>
+
+  <h2>接口矩阵</h2>
+  <table>
+    <tr><th>关节</th><th>command</th><th>state</th></tr>
+    <tr><td>joint1–4</td><td>effort</td><td>position, velocity</td></tr>
+    <tr><td>gripper_left</td><td>—</td><td>position（被动）</td></tr>
+  </table>
+
+  <h2>关键公式</h2>
+  <pre>τ_cmd_i = effort_sign_flips_i × torque_scaling_factors_i × G_i(q)
+
+// 摩擦开启时（Issue 02+）：
+τ_phys = G_i + Fv_i·q̇_i + Fc_i·sign_ε(q̇_i)</pre>
+
+  <h2>Mock 冒烟</h2>
+  <pre>ros2 launch open_manipulator_bringup \
+  open_manipulator_x_pinocchio_gravity_compensation.launch.py \
+  use_mock_hardware:=true</pre>
+
+  <h2>离线 parity</h2>
+  <pre>colcon test --packages-select om_pinocchio_gravity_compensation_controller
+# Init / Home / Ready + gripper open 0.019 m
+# max |g_pin − g_kdl| &lt; 1e-2 N·m</pre>
+
+  <p class="cite">
+    <a href="../lessons/0010-omx-pinocchio-gc-controller.html">第 10 课</a> ·
+    <a href="pinocchio-gravity-compensation.html">Pinocchio g(q) 速查</a> ·
+    <a href="../CONTEXT.md">CONTEXT</a>
+  </p>
+
+</body>
+</html>
