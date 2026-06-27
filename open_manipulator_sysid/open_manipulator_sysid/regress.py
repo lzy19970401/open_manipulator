@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import html
 import math
 from dataclasses import dataclass
@@ -44,23 +45,20 @@ INERTIA_PARAM_NAMES = (
     'Iyz',
     'Izz',
 )
-VELOCITY_SIGN_EPS = 1e-3
 SVD_RANK_RTOL = 1e-6
-NUM_FRICTION_PARAMS = len(ARM_JOINTS) * 2
+NUM_FRICTION_PARAMS = len(ARM_JOINTS)
 
 
 @dataclass(frozen=True)
 class SyntheticFrictionTruth:
-    """Ground-truth friction used to synthesize torque measurements."""
+    """Ground-truth viscous friction used to synthesize torque measurements."""
 
     viscous: Dict[str, float]
-    coulomb: Dict[str, float]
 
 
 @dataclass(frozen=True)
 class RegressionResult:
     viscous: np.ndarray
-    coulomb: np.ndarray
     residual_norm: float
     condition_number: float
     matrix_rank: int
@@ -77,42 +75,133 @@ def require_pinocchio() -> None:
         ) from _PINOCCHIO_IMPORT_ERROR
 
 
-def default_urdf_path() -> Path:
-    """Return bundled OpenMANIPULATOR-X URDF (source tree or install share)."""
-    source_path = (
-        Path(__file__).resolve().parents[2]
-        / 'open_manipulator_description'
-        / 'urdf'
-        / 'open_manipulator_x'
-        / 'open_manipulator_x.urdf'
-    )
-    if source_path.is_file():
-        return source_path
+def _description_share_subpath(*parts: str) -> Path:
+    """Resolve open_manipulator_description/... in source tree or install share."""
+    source_path = Path(__file__).resolve().parents[2] / 'open_manipulator_description'
+    candidate = source_path.joinpath(*parts)
+    if candidate.is_file():
+        return candidate
 
     try:
         from ament_index_python.packages import get_package_share_directory
 
         share = Path(get_package_share_directory('open_manipulator_description'))
-        installed = share / 'urdf' / 'open_manipulator_x' / 'open_manipulator_x.urdf'
+        installed = share.joinpath(*parts)
         if installed.is_file():
             return installed
     except Exception:
         pass
 
     raise FileNotFoundError(
-        'open_manipulator_x.urdf not found in source tree or package share directory'
+        f'open_manipulator_description file not found: {" / ".join(parts)}'
     )
 
 
+def default_xacro_path() -> Path:
+    """Return bundled OpenMANIPULATOR-X top-level xacro (source tree or install share)."""
+    return _description_share_subpath(
+        'urdf',
+        'open_manipulator_x',
+        'open_manipulator_x.urdf.xacro',
+    )
+
+
+def default_urdf_path() -> Path:
+    """Return bundled static OpenMANIPULATOR-X URDF (legacy override via --urdf)."""
+    return _description_share_subpath(
+        'urdf',
+        'open_manipulator_x',
+        'open_manipulator_x.urdf',
+    )
+
+
+def default_xacro_mappings() -> Dict[str, str]:
+    """Default xacro args aligned with hardware excitation launch (Pinocchio uses inertial only)."""
+    return {
+        'prefix': '',
+        'use_sim': 'false',
+        'use_mock_hardware': 'false',
+        'mock_sensor_commands': 'false',
+        'port_name': '/dev/ttyUSB0',
+        'ros2_control_type': 'open_manipulator_x_position',
+    }
+
+
+def expand_xacro(
+    xacro_path: Path | str,
+    mappings: Optional[Mapping[str, str]] = None,
+) -> str:
+    import xacro
+
+    resolved_mappings = dict(default_xacro_mappings())
+    if mappings:
+        resolved_mappings.update(mappings)
+    document = xacro.process_file(str(xacro_path), mappings=resolved_mappings)
+    return document.toprettyxml(indent='  ')
+
+
+def format_model_source(
+    model_path: Path,
+    *,
+    xacro_mappings: Optional[Mapping[str, str]] = None,
+) -> str:
+    if xacro_mappings is None:
+        return str(model_path)
+    pairs = ' '.join(f'{key}:={value}' for key, value in sorted(xacro_mappings.items()))
+    return f'{model_path} ({pairs})'
+
+
+DEFAULT_RESULTS_DIR = Path('/workspace/sysid_results')
+
+
 def default_results_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / 'results'
+    DEFAULT_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    return DEFAULT_RESULTS_DIR
 
 
-def load_model(urdf_path: Path | str):
+def load_model(
+    model_path: Path | str,
+    *,
+    xacro_mappings: Optional[Mapping[str, str]] = None,
+):
+    """Load Pinocchio model from expanded xacro (default) or a plain .urdf file."""
     require_pinocchio()
-    model = pin.buildModelFromUrdf(str(urdf_path))
+    path = Path(model_path)
+    if path.suffix == '.xacro' or xacro_mappings is not None:
+        urdf_xml = expand_xacro(path, xacro_mappings)
+        model = pin.buildModelFromXML(urdf_xml)
+    else:
+        model = pin.buildModelFromUrdf(str(path))
     data = model.createData()
     return model, data
+
+
+def load_default_model():
+    """Load the default OMX model from open_manipulator_x.urdf.xacro."""
+    return load_model(
+        default_xacro_path(),
+        xacro_mappings=default_xacro_mappings(),
+    )
+
+
+def resolve_model_load_args(
+    *,
+    urdf_path: Optional[Path | str] = None,
+    xacro_path: Optional[Path | str] = None,
+    xacro_mappings: Optional[Mapping[str, str]] = None,
+) -> Tuple[Path, Optional[Dict[str, str]], str]:
+    if urdf_path is not None and xacro_path is not None:
+        raise ValueError('Provide only one of --urdf or --xacro')
+
+    if urdf_path is not None:
+        path = Path(urdf_path)
+        return path, None, format_model_source(path)
+
+    path = Path(xacro_path) if xacro_path else default_xacro_path()
+    resolved_mappings = dict(default_xacro_mappings())
+    if xacro_mappings:
+        resolved_mappings.update(xacro_mappings)
+    return path, resolved_mappings, format_model_source(path, xacro_mappings=resolved_mappings)
 
 
 def arm_velocity_indices(model) -> List[int]:
@@ -143,7 +232,7 @@ def nominal_friction_from_urdf(model) -> Tuple[Dict[str, float], Dict[str, float
 
 
 def default_synthetic_friction(model) -> SyntheticFrictionTruth:
-    """Synthetic ground truth: URDF viscous + small offset, fixed Coulomb values."""
+    """Synthetic ground truth: URDF viscous + small offset per joint."""
     viscous_nominal, _ = nominal_friction_from_urdf(model)
     viscous = {
         joint: viscous_nominal[joint] + offset
@@ -152,30 +241,12 @@ def default_synthetic_friction(model) -> SyntheticFrictionTruth:
             (0.02, 0.05, 0.01, 0.03),
         )
     }
-    coulomb = {
-        'joint1': 0.02,
-        'joint2': 0.03,
-        'joint3': 0.025,
-        'joint4': 0.02,
-    }
-    return SyntheticFrictionTruth(viscous=viscous, coulomb=coulomb)
-
-
-def velocity_sign(values: np.ndarray, eps: float = VELOCITY_SIGN_EPS) -> np.ndarray:
-    signed = np.zeros_like(values, dtype=float)
-    moving = np.abs(values) >= eps
-    signed[moving] = np.sign(values[moving])
-    return signed
+    return SyntheticFrictionTruth(viscous=viscous)
 
 
 def build_friction_regressor_row(arm_velocity: np.ndarray) -> np.ndarray:
-    """Return Y_fric with shape (4, 8): [diag(q̇) | diag(sign(q̇))]."""
-    return np.hstack(
-        [
-            np.diag(arm_velocity),
-            np.diag(velocity_sign(arm_velocity)),
-        ]
-    )
+    """Return Y_fric with shape (4, 4): diag(q̇) for Fv only."""
+    return np.diag(arm_velocity)
 
 
 def dynamics_torque_arm(
@@ -227,7 +298,6 @@ def generate_synthetic_dataset(
     arm_indices = arm_velocity_indices(model)
     truth = friction_truth or default_synthetic_friction(model)
     fv = np.array([truth.viscous[joint] for joint in ARM_JOINTS])
-    fc = np.array([truth.coulomb[joint] for joint in ARM_JOINTS])
     rng = np.random.default_rng(rng_seed)
 
     rows: List[np.ndarray] = []
@@ -242,7 +312,7 @@ def generate_synthetic_dataset(
         q, velocity, acceleration = stack_state_from_sample(model, sample, arm_indices)
         arm_velocity = velocity[arm_indices]
         tau_dyn = dynamics_torque_arm(model, data, q, velocity, acceleration, arm_indices)
-        tau_friction = fv * arm_velocity + fc * velocity_sign(arm_velocity)
+        tau_friction = fv * arm_velocity
         tau_meas = tau_dyn + tau_friction + rng.normal(0.0, noise_std, len(ARM_JOINTS))
         tau_residual = tau_meas - tau_dyn
         rows.append(build_friction_regressor_row(arm_velocity))
@@ -268,12 +338,8 @@ def solve_least_squares(regressor: np.ndarray, torque: np.ndarray) -> np.ndarray
     return solution
 
 
-def split_friction_vector(
-    parameter_vector: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
-    viscous = parameter_vector[:len(ARM_JOINTS)]
-    coulomb = parameter_vector[len(ARM_JOINTS):]
-    return viscous, coulomb
+def split_viscous_vector(parameter_vector: np.ndarray) -> np.ndarray:
+    return parameter_vector[:len(ARM_JOINTS)]
 
 
 def generate_dataset_regression(
@@ -310,16 +376,22 @@ def run_dataset_regression(
     dataset: IdentificationDataset,
     *,
     urdf_path: Optional[Path | str] = None,
+    xacro_path: Optional[Path | str] = None,
+    xacro_mappings: Optional[Mapping[str, str]] = None,
     excitation_config: Optional[Path | str] = None,
     output_dir: Optional[Path | str] = None,
     dataset_source: Optional[str] = None,
 ) -> RegressionResult:
     require_pinocchio()
-    resolved_urdf = Path(urdf_path) if urdf_path else default_urdf_path()
+    model_path, load_mappings, model_source_label = resolve_model_load_args(
+        urdf_path=urdf_path,
+        xacro_path=xacro_path,
+        xacro_mappings=xacro_mappings,
+    )
     resolved_config = Path(excitation_config) if excitation_config else default_config_path()
     resolved_output = Path(output_dir) if output_dir else default_results_dir()
 
-    model, data = load_model(resolved_urdf)
+    model, data = load_model(model_path, xacro_mappings=load_mappings)
     trajectory = ExcitationTrajectory.from_yaml(resolved_config)
     validate_identification_dataset(dataset)
     regressor, torque_residual = generate_dataset_regression(dataset, model, data)
@@ -328,27 +400,26 @@ def run_dataset_regression(
     if matrix_rank < NUM_FRICTION_PARAMS:
         raise ValueError(
             f'Friction regressor rank {matrix_rank}/{NUM_FRICTION_PARAMS} — '
-            'columns for Fv/Fc are not persistently excited. '
+            'columns for Fv are not persistently excited. '
             'The bag likely has zero joint velocity (static pose) or constant '
             'effort only. Re-record after a successful excitation run.'
         )
 
     parameter_vector = solve_least_squares(regressor, torque_residual)
     residual_norm = float(np.linalg.norm(regressor @ parameter_vector - torque_residual))
-    viscous, coulomb = split_friction_vector(parameter_vector)
+    viscous = split_viscous_vector(parameter_vector)
 
     if np.any(~np.isfinite(parameter_vector)) or np.any(
         np.abs(parameter_vector) > MAX_REASONABLE_FRICTION
     ):
         raise ValueError(
-            'Least-squares friction estimate is non-finite or unreasonably large. '
-            f'Fv={viscous}, Fc={coulomb}. Check dataset motion and regressor rank '
+            'Least-squares Fv estimate is non-finite or unreasonably large. '
+            f'Fv={viscous}. Check dataset motion and regressor rank '
             f'({matrix_rank}/{NUM_FRICTION_PARAMS}).'
         )
 
     result = RegressionResult(
         viscous=viscous,
-        coulomb=coulomb,
         residual_norm=residual_norm,
         condition_number=condition_number,
         matrix_rank=matrix_rank,
@@ -358,28 +429,25 @@ def run_dataset_regression(
     )
 
     resolved_output.mkdir(parents=True, exist_ok=True)
-    viscous_nominal, coulomb_nominal = nominal_friction_from_urdf(model)
+    viscous_nominal, _ = nominal_friction_from_urdf(model)
     write_inertia_nominal_yaml(
         resolved_output / 'inertia_nominal.yaml',
         model=model,
-        urdf_path=resolved_urdf,
+        urdf_path=Path(model_source_label),
     )
     write_friction_yaml(
         resolved_output / 'friction_estimated.yaml',
         estimated_viscous=result.viscous,
-        estimated_coulomb=result.coulomb,
         nominal_viscous=viscous_nominal,
-        nominal_coulomb=coulomb_nominal,
         synthetic_truth=None,
     )
     write_report_html(
         resolved_output / 'report.html',
         model=model,
         result=result,
-        urdf_path=resolved_urdf,
+        urdf_path=Path(model_source_label),
         excitation_config=resolved_config,
         viscous_nominal=viscous_nominal,
-        coulomb_nominal=coulomb_nominal,
         synthetic_truth=None,
         dataset_source=dataset_source,
     )
@@ -389,6 +457,8 @@ def run_dataset_regression(
 def run_synthetic_regression(
     *,
     urdf_path: Optional[Path | str] = None,
+    xacro_path: Optional[Path | str] = None,
+    xacro_mappings: Optional[Mapping[str, str]] = None,
     excitation_config: Optional[Path | str] = None,
     output_dir: Optional[Path | str] = None,
     num_periods: int = 3,
@@ -397,11 +467,15 @@ def run_synthetic_regression(
     rng_seed: int = 0,
 ) -> RegressionResult:
     require_pinocchio()
-    resolved_urdf = Path(urdf_path) if urdf_path else default_urdf_path()
+    model_path, load_mappings, model_source_label = resolve_model_load_args(
+        urdf_path=urdf_path,
+        xacro_path=xacro_path,
+        xacro_mappings=xacro_mappings,
+    )
     resolved_config = Path(excitation_config) if excitation_config else default_config_path()
     resolved_output = Path(output_dir) if output_dir else default_results_dir()
 
-    model, data = load_model(resolved_urdf)
+    model, data = load_model(model_path, xacro_mappings=load_mappings)
     trajectory = ExcitationTrajectory.from_yaml(resolved_config)
     regressor, torque_residual, friction_truth = generate_synthetic_dataset(
         trajectory,
@@ -416,11 +490,10 @@ def run_synthetic_regression(
     parameter_vector = solve_least_squares(regressor, torque_residual)
     residual_norm = float(np.linalg.norm(regressor @ parameter_vector - torque_residual))
     matrix_rank, condition_number = effective_rank_and_condition(regressor)
-    viscous, coulomb = split_friction_vector(parameter_vector)
+    viscous = split_viscous_vector(parameter_vector)
 
     result = RegressionResult(
         viscous=viscous,
-        coulomb=coulomb,
         residual_norm=residual_norm,
         condition_number=condition_number,
         matrix_rank=matrix_rank,
@@ -430,28 +503,25 @@ def run_synthetic_regression(
     )
 
     resolved_output.mkdir(parents=True, exist_ok=True)
-    viscous_nominal, coulomb_nominal = nominal_friction_from_urdf(model)
+    viscous_nominal, _ = nominal_friction_from_urdf(model)
     write_inertia_nominal_yaml(
         resolved_output / 'inertia_nominal.yaml',
         model=model,
-        urdf_path=resolved_urdf,
+        urdf_path=Path(model_source_label),
     )
     write_friction_yaml(
         resolved_output / 'friction_estimated.yaml',
         estimated_viscous=result.viscous,
-        estimated_coulomb=result.coulomb,
         nominal_viscous=viscous_nominal,
-        nominal_coulomb=coulomb_nominal,
         synthetic_truth=friction_truth,
     )
     write_report_html(
         resolved_output / 'report.html',
         model=model,
         result=result,
-        urdf_path=resolved_urdf,
+        urdf_path=Path(model_source_label),
         excitation_config=resolved_config,
         viscous_nominal=viscous_nominal,
-        coulomb_nominal=coulomb_nominal,
         synthetic_truth=friction_truth,
     )
     return result
@@ -500,27 +570,22 @@ def write_friction_yaml(
     path: Path,
     *,
     estimated_viscous: np.ndarray,
-    estimated_coulomb: np.ndarray,
     nominal_viscous: Mapping[str, float],
-    nominal_coulomb: Mapping[str, float],
     synthetic_truth: Optional[SyntheticFrictionTruth] = None,
 ) -> None:
     joints: Dict[str, Dict[str, float]] = {}
     for index, joint in enumerate(ARM_JOINTS):
         entry: Dict[str, float] = {
             'Fv_estimated': float(estimated_viscous[index]),
-            'Fc_estimated': float(estimated_coulomb[index]),
             'Fv_nominal_urdf': float(nominal_viscous[joint]),
-            'Fc_nominal_urdf': float(nominal_coulomb[joint]),
         }
         if synthetic_truth is not None:
             entry['Fv_synthetic_truth'] = float(synthetic_truth.viscous[joint])
-            entry['Fc_synthetic_truth'] = float(synthetic_truth.coulomb[joint])
         joints[joint] = entry
     payload = {
         'description': (
-            'Estimated arm friction (Fv viscous, Fc Coulomb) with URDF inertia fixed. '
-            'Phase 2 may copy Fv/Fc into calibrated_dynamics.yaml.'
+            'Estimated arm viscous friction (Fv) with URDF inertia fixed. '
+            'Phase 2 may copy Fv into calibrated_dynamics.yaml.'
         ),
         'joints': joints,
     }
@@ -542,7 +607,6 @@ def write_report_html(
     urdf_path: Path,
     excitation_config: Path,
     viscous_nominal: Mapping[str, float],
-    coulomb_nominal: Mapping[str, float],
     synthetic_truth: Optional[SyntheticFrictionTruth] = None,
     dataset_source: Optional[str] = None,
 ) -> None:
@@ -558,28 +622,19 @@ def write_report_html(
         cells = [
             f'<td>{html.escape(joint)}</td>',
             f'<td>{_format_float(viscous_nominal[joint])}</td>',
-            f'<td>{_format_float(result.viscous[index])}</td>',
-            f'<td>{_format_float(coulomb_nominal[joint])}</td>',
-            f'<td>{_format_float(result.coulomb[index])}</td>',
         ]
         if include_truth:
-            cells.insert(
-                3,
-                f'<td>{_format_float(synthetic_truth.viscous[joint])}</td>',
-            )
-            cells.append(f'<td>{_format_float(synthetic_truth.coulomb[joint])}</td>')
+            cells.append(f'<td>{_format_float(synthetic_truth.viscous[joint])}</td>')
+        cells.append(f'<td>{_format_float(result.viscous[index])}</td>')
         friction_rows.append('<tr>' + ''.join(cells) + '</tr>')
 
     header_cells = [
         '<th>Joint</th>',
         '<th>Fv nominal (URDF)</th>',
-        '<th>Fv estimated</th>',
-        '<th>Fc nominal (URDF)</th>',
-        '<th>Fc estimated</th>',
     ]
     if include_truth:
-        header_cells.insert(3, '<th>Fv synthetic truth</th>')
-        header_cells.append('<th>Fc synthetic truth</th>')
+        header_cells.append('<th>Fv synthetic truth</th>')
+    header_cells.append('<th>Fv estimated</th>')
 
     source_line = ''
     if dataset_source:
@@ -608,7 +663,7 @@ def write_report_html(
   <p class="meta">Excitation config: {html.escape(str(excitation_config))}</p>
   {source_line}
   <p>Inertia: fixed from URDF via RNEA (<code>τ<sub>res</sub> = τ<sub>meas</sub> − τ<sub>dyn,URDF</sub></code>).
-  Only Fv and Fc are estimated (8 parameters).</p>
+  Only Fv is estimated (4 parameters).</p>
 
   <h2>Regression quality</h2>
   <table>
@@ -634,6 +689,63 @@ def write_report_html(
     path.write_text(document, encoding='utf-8')
 
 
+def _parse_xacro_mapping_arg(value: str) -> Tuple[str, str]:
+    import argparse
+
+    if ':=' not in value:
+        raise argparse.ArgumentTypeError(
+            f'Xacro mapping must be KEY:=VALUE, got {value!r}'
+        )
+    key, mapped_value = value.split(':=', 1)
+    key = key.strip()
+    if not key:
+        raise argparse.ArgumentTypeError(
+            f'Xacro mapping key must be non-empty, got {value!r}'
+        )
+    return key, mapped_value.strip()
+
+
+def _add_model_source_arguments(parser: argparse.ArgumentParser) -> None:
+    model_group = parser.add_argument_group('robot model source')
+    model_group.add_argument(
+        '--urdf',
+        type=Path,
+        default=None,
+        help=(
+            'Path to a plain open_manipulator_x.urdf (overrides default xacro). '
+            'Mutually exclusive with --xacro.'
+        ),
+    )
+    model_group.add_argument(
+        '--xacro',
+        type=Path,
+        default=None,
+        help=(
+            'Path to open_manipulator_x.urdf.xacro '
+            '(default: open_manipulator_description bundle)'
+        ),
+    )
+    model_group.add_argument(
+        '--xacro-mapping',
+        action='append',
+        default=[],
+        metavar='KEY:=VALUE',
+        type=_parse_xacro_mapping_arg,
+        help=(
+            'Extra xacro argument (repeatable), e.g. use_sim:=true. '
+            'Merged over package defaults aligned with excitation launch.'
+        ),
+    )
+
+
+def _model_source_kwargs_from_parsed(parsed: argparse.Namespace) -> Dict[str, object]:
+    return {
+        'urdf_path': parsed.urdf,
+        'xacro_path': parsed.xacro,
+        'xacro_mappings': dict(parsed.xacro_mapping) if parsed.xacro_mapping else None,
+    }
+
+
 def main(args: Optional[Sequence[str]] = None) -> None:
     import argparse
 
@@ -643,12 +755,7 @@ def main(args: Optional[Sequence[str]] = None) -> None:
             'results/*.yaml + report.html'
         )
     )
-    parser.add_argument(
-        '--urdf',
-        type=Path,
-        default=None,
-        help='Path to open_manipulator_x.urdf (default: open_manipulator_description)',
-    )
+    _add_model_source_arguments(parser)
     parser.add_argument(
         '--config',
         type=Path,
@@ -659,7 +766,10 @@ def main(args: Optional[Sequence[str]] = None) -> None:
         '--output-dir',
         type=Path,
         default=None,
-        help='Directory for inertia_nominal.yaml, friction_estimated.yaml, report.html',
+        help=(
+            'Directory for inertia_nominal.yaml, friction_estimated.yaml, report.html '
+            f'(default: {DEFAULT_RESULTS_DIR})'
+        ),
     )
     parser.add_argument(
         '--periods',
@@ -688,7 +798,7 @@ def main(args: Optional[Sequence[str]] = None) -> None:
     parsed = parser.parse_args(args)
 
     result = run_synthetic_regression(
-        urdf_path=parsed.urdf,
+        **_model_source_kwargs_from_parsed(parsed),
         excitation_config=parsed.config,
         output_dir=parsed.output_dir,
         num_periods=parsed.periods,
@@ -715,6 +825,7 @@ def main_bag(args: Optional[Sequence[str]] = None) -> None:
             'results/*.yaml + report.html'
         )
     )
+    _add_model_source_arguments(parser)
     parser.add_argument(
         '--dataset',
         type=Path,
@@ -728,12 +839,6 @@ def main_bag(args: Optional[Sequence[str]] = None) -> None:
         help='Rosbag2 directory (converted on the fly if --dataset omitted)',
     )
     parser.add_argument(
-        '--urdf',
-        type=Path,
-        default=None,
-        help='Path to open_manipulator_x.urdf (default: open_manipulator_description)',
-    )
-    parser.add_argument(
         '--config',
         type=Path,
         default=None,
@@ -743,7 +848,7 @@ def main_bag(args: Optional[Sequence[str]] = None) -> None:
         '--output-dir',
         type=Path,
         default=None,
-        help='Directory for regression outputs',
+        help=f'Directory for regression outputs (default: {DEFAULT_RESULTS_DIR})',
     )
     parser.add_argument(
         '--dt',
@@ -782,7 +887,7 @@ def main_bag(args: Optional[Sequence[str]] = None) -> None:
 
     result = run_dataset_regression(
         dataset,
-        urdf_path=parsed.urdf,
+        **_model_source_kwargs_from_parsed(parsed),
         excitation_config=parsed.config,
         output_dir=parsed.output_dir,
         dataset_source=dataset_source,
