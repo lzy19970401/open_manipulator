@@ -72,6 +72,11 @@ def generate_launch_description():
             description='Type of ros2_control (effort variant for Arm joints).',
         ),
         DeclareLaunchArgument(
+            'enable_coriolis_compensation',
+            default_value='false',
+            description='Enable C(q,qdot)qdot overlay via nonLinearEffects (default pure G(q)).',
+        ),
+        DeclareLaunchArgument(
             'enable_friction_compensation',
             default_value='false',
             description='Enable Fv/Fc friction overlay on Arm joints (default pure G(q)).',
@@ -84,6 +89,7 @@ def generate_launch_description():
     mock_sensor_commands = LaunchConfiguration('mock_sensor_commands')
     port_name = LaunchConfiguration('port_name')
     ros2_control_type = LaunchConfiguration('ros2_control_type')
+    enable_coriolis_compensation = LaunchConfiguration('enable_coriolis_compensation')
     enable_friction_compensation = LaunchConfiguration('enable_friction_compensation')
 
     urdf_command = Command([
@@ -132,6 +138,7 @@ def generate_launch_description():
             {
                 'pinocchio_gravity_compensation_controller': {
                     'ros__parameters': {
+                        'enable_coriolis_compensation': enable_coriolis_compensation,
                         'enable_friction_compensation': enable_friction_compensation,
                     }
                 }

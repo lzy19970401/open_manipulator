@@ -53,6 +53,8 @@ private:
 
   void fill_configuration_vector(Eigen::VectorXd & q) const;
 
+  void fill_velocity_vector(Eigen::VectorXd & v) const;
+
   std::shared_ptr<ParamListener> param_listener_;
   Params params_;
 

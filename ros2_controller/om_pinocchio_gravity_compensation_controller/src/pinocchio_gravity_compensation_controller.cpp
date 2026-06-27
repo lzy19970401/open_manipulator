@@ -100,6 +100,17 @@ void PinocchioGravityCompensationController::fill_configuration_vector(Eigen::Ve
   }
 }
 
+void PinocchioGravityCompensationController::fill_velocity_vector(Eigen::VectorXd & v) const
+{
+  v.setZero(model_.nv);
+
+  for (size_t i = 0; i < n_joints_; ++i) {
+    const double velocity =
+      arm_state_interface_[1][i].get().get_optional().value_or(0.0);
+    v[arm_velocity_indices_[i]] = velocity;
+  }
+}
+
 controller_interface::return_type PinocchioGravityCompensationController::update(
   [[maybe_unused]] const rclcpp::Time & time,
   [[maybe_unused]] const rclcpp::Duration & period)
@@ -107,12 +118,21 @@ controller_interface::return_type PinocchioGravityCompensationController::update
   Eigen::VectorXd q(model_.nq);
   fill_configuration_vector(q);
 
-  pinocchio::computeGeneralizedGravity(model_, *data_, q);
+  if (params_.enable_coriolis_compensation) {
+    Eigen::VectorXd v(model_.nv);
+    fill_velocity_vector(v);
+    pinocchio::nonLinearEffects(model_, *data_, q, v);
+  } else {
+    pinocchio::computeGeneralizedGravity(model_, *data_, q);
+  }
 
   const double friction_deadzone = params_.friction_velocity_deadzone;
 
   for (size_t i = 0; i < n_joints_; ++i) {
-    double tau_phys = data_->g[arm_velocity_indices_[i]];
+    const int velocity_index = arm_velocity_indices_[i];
+    double tau_phys = params_.enable_coriolis_compensation ?
+      data_->nle[velocity_index] :
+      data_->g[velocity_index];
 
     if (params_.enable_friction_compensation) {
       const double qdot =

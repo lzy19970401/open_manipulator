@@ -39,6 +39,11 @@ pinocchio_gravity_compensation_controller:
     default_value: [1.0, 1.0, 1.0, 1.0],
     description: "Per-joint magnitude scaling applied after effort_sign_flips"
   }
+  enable_coriolis_compensation: {
+    type: bool,
+    default_value: false,
+    description: "When true, use G(q)+C(q,qdot)qdot via nonLinearEffects instead of G(q) only"
+  }
   enable_friction_compensation: {
     type: bool,
     default_value: false,
