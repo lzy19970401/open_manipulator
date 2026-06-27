@@ -79,6 +79,11 @@ if(BUILD_TESTING)
       ament_index_cpp::ament_index_cpp
     )
   endif()
+
+  ament_add_gtest(test_friction_compensation test/test_friction_compensation.cpp)
+  if(TARGET test_friction_compensation)
+    target_compile_features(test_friction_compensation PUBLIC cxx_std_17)
+  endif()
 endif()
 
 ################################################################################
