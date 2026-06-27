@@ -4,6 +4,12 @@
 
   <xacro:macro name="open_manipulator_x" params="prefix=''">
 
+    <!-- intertia and mass scaling factors -->
+    <xacro:property name="s1" value="1.0"/>
+    <xacro:property name="s2" value="1.0"/>
+    <xacro:property name="s3" value="1.0"/>
+    <xacro:property name="s4" value="1.0"/>
+
     <xacro:property
       name="meshes_file_direction"
       value="package://open_manipulator_description/meshes/open_manipulator_x"/>
@@ -72,10 +78,10 @@
        <inertial>
         <!-- <origin xyz="-3.0184870e-04 5.4043684e-04 ${0.018 + 2.9433464e-02}" /> -->
         <origin xyz="-3.0184870e-04 5.4043684e-04  2.9433464e-02" />
-        <mass value="9.8406837e-02" />
-        <inertia ixx="3.4543422e-05" ixy="-1.6031095e-08" ixz="-3.8375155e-07"
-                 iyy="3.2689329e-05" iyz="2.8511935e-08"
-                 izz="1.8850320e-05" />
+        <mass value="${9.8406837e-02 * s1}" />
+        <inertia ixx="${3.4543422e-05 * s1}" ixy="${-1.6031095e-08 * s1}" ixz="${-3.8375155e-07 * s1}"
+                 iyy="${3.2689329e-05 * s1}" iyz="${2.8511935e-08 * s1}"
+                 izz="${1.8850320e-05 * s1}" />
       </inertial>
     </link>
 
@@ -110,10 +116,10 @@
 
        <inertial>
         <origin xyz="1.0308393e-02 3.7743363e-04 1.0170197e-01" />
-        <mass value="1.3850917e-01" />
-        <inertia ixx="3.3055381e-04" ixy="-9.7940978e-08" ixz="-3.8505711e-05"
-                 iyy="3.4290447e-04" iyz="-1.5717516e-06"
-                 izz="6.0346498e-05" />
+        <mass value="${1.3850917e-01 * s2}" />
+        <inertia ixx="${3.3055381e-04 * s2}" ixy="${-9.7940978e-08 * s2}" ixz="${-3.8505711e-05 * s2}"
+                 iyy="${3.4290447e-04 * s2}" iyz="${-1.5717516e-06 * s2}"
+                 izz="${6.0346498e-05 * s2}" />
       </inertial>
     </link>
 
@@ -146,10 +152,10 @@
 
        <inertial>
         <origin xyz="9.0909590e-02 3.8929816e-04 2.2413279e-04" />
-        <mass value="1.3274562e-01" />
-        <inertia ixx="3.0654178e-05" ixy="-1.2764155e-06" ixz="-2.6874417e-07"
-                 iyy="2.4230292e-04" iyz="1.1559550e-08"
-                 izz="2.5155057e-04" />
+        <mass value="${1.3274562e-01 * s3}" />
+        <inertia ixx="${3.0654178e-05 * s3}" ixy="${-1.2764155e-06 * s3}" ixz="${-2.6874417e-07 * s3}"
+                 iyy="${2.4230292e-04 * s3}" iyz="${1.1559550e-08 * s3}"
+                 izz="${2.5155057e-04 * s3}" />
       </inertial>
     </link>
 
@@ -182,10 +188,10 @@
 
        <inertial>
         <origin xyz="4.4206755e-02 3.6839985e-07 8.9142216e-03" />
-        <mass value="1.4327573e-01" />
-        <inertia ixx="8.0870749e-05" ixy="0.0" ixz="-1.0157896e-06"
-                 iyy="7.5980465e-05" iyz="0.0"
-                 izz="9.3127351e-05" />
+        <mass value="${1.4327573e-01 * s4}" />
+        <inertia ixx="${8.0870749e-05 * s4}" ixy="0.0" ixz="${-1.0157896e-06 * s4}"
+                 iyy="${7.5980465e-05 * s4}" iyz="0.0"
+                 izz="${9.3127351e-05 * s4}" />
       </inertial>
     </link>
 
