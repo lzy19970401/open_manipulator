@@ -139,3 +139,35 @@ _Avoid_: damping, B（未区分 URDF `<dynamics>` 阻尼时）
 **Coulomb friction coefficient（库仑摩擦系数 Fc）**:
 与运动方向有关的常值干摩擦系数，线性模型中为 `τ_f = Fc · sign(q̇)`。
 _Avoid_: static friction（未区分 stiction 模型时）
+
+**Static gravity validation（静态重力校验）**:
+在多个 **Named pose** 或 curated 构型下，以位置模式 hold 使 **Arm** 满足 **q̇≈0、q̈≈0**，比较实测力矩与 **Nominal dynamics model** 重力项是否一致；用于在 **Excitation trajectory** 之前诊断 URDF 质量、质心、关节零位等问题。仅考察 **Generalized gravity g(q)**，不涉及惯量矩阵或 **BIP** 回归。
+_Avoid_: gravity check（未说明是静态 hold 时）、Phase 1 regression（指摩擦/BIP 离线回归时）
+
+**Gravity residual（重力残差）**:
+静态 hold 稳态窗口内 **Δτ = τ_meas − G_URDF(q)**（逐关节）；理论上 **q̇≈0** 时 **Δτ** 主要反映模型重力误差与静摩擦 **Fc**，而非 **Fv** 或连杆转动惯量。
+_Avoid_: friction residual（指 **Excitation trajectory** 下 **τ_meas − τ_dyn** 时）
+
+**Compensation mode（补偿模式）**:
+**Pinocchio gravity compensation control mode** 下互斥的三档前馈组合：**G**（仅 **Generalized gravity g(q)**）、**G+C**（g(q) 与 **Coriolis**/**centrifugal** 项，Pinocchio `nonLinearEffects`）、**G+C+F**（再叠加 **Viscous friction coefficient Fv** 与 **Coulomb friction coefficient Fc**）。由 launch 参数 `enable_coriolis_compensation` / `enable_friction_compensation` 切换。
+_Avoid_: GC level, compensation tier（未与 Pinocchio 栈绑定时）
+
+**Dynamics residual（动力学残差）**:
+动态段（**Backdrive trial** 或恒速扫掠）内 **Δτ = τ_meas − τ_model(mode)**，其中 **τ_model** 按当前 **Compensation mode** 选取与控制器一致的前馈项（G、G+C 或 G+C+F）；反映未补偿动力学、模型误差及操作者施加力。不含 **M(q)q̈** 前馈（GC 控制器不补偿惯量项）。
+_Avoid_: gravity residual（静态仅 G 时）、tracking error（指位置跟踪时）
+
+**Backdrive trial（拖动手试验）**:
+**Gravity compensation control mode** 下，操作者沿固定 **Validation pose** 序列手动拖动 **Arm** 并录 bag 的可重复试验；用于在 **q̇≠0** 时对比 **Compensation mode** 的 **Dynamics residual**。
+_Avoid_: excitation run（指 sysid 自动轨迹跟踪时）、teaching session（指录制回放时）
+
+**Compensation wastage power（补偿浪费功率）**:
+动态段时间平均 **P = (1/T)∫ Σ_i |Δτ_i · q̇_i| dt**，其中 **Δτ** 为 **Dynamics residual**；衡量前馈不足时「白耗」在关节上的功率，越小表示拖动手感越省力。
+_Avoid_: motor power, electrical power（指舵机输入电功率时）
+
+**Validation pose（校验构型）**:
+**Compensation evaluation** 使用的 **Named pose** 及工作空间补点集合（如 `init`、`home`、`ready` 与 sysid q₀ 等）；静态 hold 用于 **Static gravity validation**，并作为 **Backdrive trial** 路径节点。
+_Avoid_: test pose（未强调是评测 curated 集时）
+
+**Compensation evaluation（补偿评测）**:
+在 **Hardware** 上对比 **Compensation mode**（G / G+C / G+C+F）的固定实验协议：静态 **Validation pose** hold 录 bag、**Backdrive trial** 录 bag，离线计算 **Gravity residual** 与 **Dynamics residual** 等指标。操作说明见 [docs/open-manipulator-x-compensation-evaluation.md](docs/open-manipulator-x-compensation-evaluation.md)。
+_Avoid_: sysid run（指 BIP/摩擦回归流水线时）、tuning session（指单关节手调 Fv 时）
