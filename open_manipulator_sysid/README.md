@@ -146,10 +146,14 @@ Convert rosbag → uniform dataset (default trim skips approach+hold):
 ros2 run open_manipulator_sysid bag_to_dataset --bag results/bags/<run_dir>
 ```
 
-Run regression on bag or `.npz`:
+Run regression on bag or `.npz` (default robot model: `open_manipulator_x.urdf.xacro` expanded with the same args as hardware excitation launch; override with `--urdf` or `--xacro` / `--xacro-mapping`):
 
 ```bash
 ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/<run_dir>
+# legacy static URDF:
+ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/<run_dir> --urdf /path/to/open_manipulator_x.urdf
+# Gazebo bag — match excitation sim flags:
+ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/<gazebo_run> --xacro-mapping use_sim:=true
 # or
 ros2 run open_manipulator_sysid sysid_regress_bag --dataset results/datasets/<run_dir>.npz
 ```
