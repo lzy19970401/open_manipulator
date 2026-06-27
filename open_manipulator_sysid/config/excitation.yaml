@@ -33,7 +33,7 @@ excitation:
   num_harmonics: 5
   period_s: 10.0
   # Peak-to-peak position span as a fraction of each joint hard limit range.
-  amplitude_fraction: 0.3
+  amplitude_fraction: 0.1
 
 safety:
   # Soft limits inset from hard limits (fraction of full range).
