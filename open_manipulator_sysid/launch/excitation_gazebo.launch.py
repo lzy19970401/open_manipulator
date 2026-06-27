@@ -33,10 +33,12 @@ def generate_launch_description():
         'open_manipulator_bringup'
     )
 
-    package_root = Path(__file__).resolve().parents[1]
+    sysid_pkg_root = Path(
+        '/workspace'
+    )
     default_bag_dir = str(
-        package_root
-        / 'results'
+        sysid_pkg_root
+        / 'sysid_results'
         / 'bags'
         / f'gazebo_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}'
     )
