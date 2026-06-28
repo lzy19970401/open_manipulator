@@ -32,6 +32,7 @@ source install/setup.bash
 | `measured_torque.py` | ROS node: `/sysid/measured_joint_torque` |
 | `hardware_torque_enable.py` | ROS node: one-shot torque enable |
 | `regress.py` | Offline friction least squares |
+| `comp_eval.py` | Compensation evaluation static gravity residual report |
 | `robot_description.py` | URDF + sysid ros2_control for launch |
 
 **Torque units:** use `torque_conversion` only — there is no separate `torque_sources` module.
@@ -217,6 +218,53 @@ ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/<hardware_r
 
 Hardware sign-off is manual: confirm finite BIP/Fv/Fc in `results/report.html` without NaN parameters.
 
+## Compensation evaluation — Issue 01: static gravity residual report
+
+Offline report for **Static gravity validation** holds recorded under one **Compensation mode** folder (`G`, `G+C`, or `G+C+F`). Computes **Gravity residual** RMS per validation pose using Pinocchio \(G(q)\) aligned with the Pinocchio GC controller (gripper mimic, effort sign flips, torque scaling from optional experiment `metadata.yaml`).
+
+### Directory layout
+
+```
+results/comp_eval/<YYYYMMDD>/
+  metadata.yaml              # optional friction/scaling snapshot
+  G/
+    static/
+      P01_init_run01/        # rosbag2 directory
+      P02_home_run01/
+      ...
+  report/                    # written by comp_eval_report
+    metrics.yaml
+    report.html
+```
+
+### CLI (container)
+
+```bash
+cd ~/ros2_ws
+colcon build --packages-select open_manipulator_sysid --symlink-install
+source install/setup.bash
+
+ros2 run open_manipulator_sysid comp_eval_report \
+  --root results/comp_eval/20250627 \
+  --mode G
+```
+
+Optional arguments:
+
+```bash
+ros2 run open_manipulator_sysid comp_eval_report \
+  --root results/comp_eval/20250627 \
+  --mode G \
+  --config /path/to/compensation_evaluation.yaml \
+  --metadata /path/to/metadata.yaml \
+  --output /path/to/report \
+  --xacro-mapping ros2_control_type:=open_manipulator_x_current
+```
+
+Exits non-zero when no static bags are found, arm joints are missing from `/joint_states`, or effort is all zero after N·m conversion. Does **not** modify `open_manipulator_bringup` GC yaml.
+
+Operator protocol: [docs/open-manipulator-x-compensation-evaluation.md](../docs/open-manipulator-x-compensation-evaluation.md).
+
 ## Package layout
 
 ```
@@ -235,6 +283,7 @@ open_manipulator_sysid/
 │   ├── hardware_torque_enable.py
 │   ├── robot_description.py
 │   ├── bag_to_dataset.py
+│   ├── comp_eval.py
 │   └── regress.py
 ├── test/
 └── results/                 # gitignored identification outputs

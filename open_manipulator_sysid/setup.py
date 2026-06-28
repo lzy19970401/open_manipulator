@@ -33,6 +33,8 @@ setup(
             'open_manipulator_sysid.regress:main_bag',
             'bag_to_dataset = '
             'open_manipulator_sysid.bag_to_dataset:main',
+            'comp_eval_report = '
+            'open_manipulator_sysid.comp_eval:main',
             'excitation_runner = '
             'open_manipulator_sysid.excitation_runner:main',
         ],
