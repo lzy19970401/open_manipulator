@@ -1,0 +1,89 @@
+pinocchio_impedance_controller:
+  joints: {
+    type: string_array,
+    default_value: [],
+    description: "Arm joint names receiving effort commands (joint1-joint4)",
+    read_only: true,
+    validation: {
+      unique<>: null,
+    }
+  }
+  passive_state_joints: {
+    type: string_array,
+    default_value: [],
+    description: "Passive joints whose position state is read to assemble full q (e.g. gripper_left_joint)",
+    read_only: true,
+    validation: {
+      unique<>: null,
+    }
+  }
+  command_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "Command interfaces provided by the hardware interface for Arm joints",
+    read_only: true,
+  }
+  state_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "State interfaces provided by the hardware for Arm joints",
+    read_only: true,
+  }
+  reference_pose_mode: {
+    type: string,
+    default_value: "capture_on_activate",
+    description: "capture_on_activate locks q_d at activation; fixed uses fixed_reference_positions",
+    validation: {
+      one_of<>: [["capture_on_activate", "fixed"]],
+    }
+  }
+  fixed_reference_positions: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Four joint angles (rad) used when reference_pose_mode is fixed"
+  }
+  stiffness: {
+    type: double_array,
+    default_value: [2.0, 2.0, 1.5, 1.0],
+    description: "Virtual joint stiffness K_j per Arm joint (N·m/rad)"
+  }
+  damping: {
+    type: double_array,
+    default_value: [0.5, 0.5, 0.3, 0.2],
+    description: "Virtual joint damping D_j per Arm joint (N·m·s/rad)"
+  }
+  reference_transition_max_velocity: {
+    type: double_array,
+    default_value: [0.5, 0.5, 0.5, 0.5],
+    description: "Per-joint max rate (rad/s) for q_d_active toward q_d_target"
+  }
+  effort_sign_flips: {
+    type: double_array,
+    default_value: [1.0, 1.0, 1.0, 1.0],
+    description: "Per-joint sign applied after impedance and optional friction computation"
+  }
+  torque_scaling_factors: {
+    type: double_array,
+    default_value: [1.0, 1.0, 1.0, 1.0],
+    description: "Per-joint magnitude scaling applied after effort_sign_flips"
+  }
+  enable_friction_compensation: {
+    type: bool,
+    default_value: false,
+    description: "When true, add Fv*qdot + Fc*sign_eps(qdot) on Arm joints before sign/scale"
+  }
+  viscous_friction_coefficients: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Viscous friction Fv per Arm joint (Nm/(rad/s))"
+  }
+  coulomb_friction_coefficients: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Coulomb friction Fc per Arm joint (Nm)"
+  }
+  friction_velocity_deadzone: {
+    type: double,
+    default_value: 0.001,
+    description: "Velocity deadzone (rad/s) for Coulomb friction sign at rest"
+  }
