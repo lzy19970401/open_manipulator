@@ -42,9 +42,9 @@
         - 0.0
       torque_scaling_factors:
         - 1.0
-        - 0.8
-        - 0.8
-        - 0.8
+        - 1.0
+        - 1.0
+        - 1.0
       kinetic_friction_torque_scalars:
         - 0.0
         - 0.0
