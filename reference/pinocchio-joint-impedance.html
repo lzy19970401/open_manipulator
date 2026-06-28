@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：Pinocchio 关节阻抗控制</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 38rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #eee; padding: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    th, td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; }
+    .eq { font-size: 0.9rem; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+
+  <p class="meta"><a href="../lessons/0011-omx-pinocchio-joint-impedance.html">← 第 11 课</a></p>
+  <h1>Pinocchio 关节阻抗速查</h1>
+
+  <h2>核心公式</h2>
+  <pre class="eq">M(q)q̈ + C(q,q̇)q̇ + g(q) = τ
+
+τ = rnea(q, v, q̈_d) + K_j(q_d − q) + D_j(q̇_d − q̇) + τ_f
+
+τ_cmd = effort_sign_flips ⊙ torque_scaling ⊙ τ
+
+τ_f,i = Fv_i q̇_i + Fc_i sign_ε(q̇_i)   [可选]</pre>
+
+  <h2>包与 Launch</h2>
+  <table>
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>包</td><td><code>om_pinocchio_impedance_controller</code></td></tr>
+    <tr><td>插件</td><td><code>pinocchio_impedance_controller/PinocchioImpedanceController</code></td></tr>
+    <tr><td>配置</td><td><code>open_manipulator_x_impedance_pinocchio</code></td></tr>
+    <tr><td>实机 Launch</td><td><code>open_manipulator_x_pinocchio_impedance.launch.py</code></td></tr>
+    <tr><td>Gazebo</td><td><code>open_manipulator_x_pinocchio_impedance_gazebo.launch.py</code></td></tr>
+  </table>
+
+  <h2>默认增益（Phase 1）</h2>
+  <pre>K_j = [2.0, 2.0, 1.5, 1.0]  N·m/rad
+D_j = [0.5, 0.5, 0.3, 0.2]  N·m·s/rad
+v_max = [0.5, 0.5, 0.5, 0.5] rad/s  (q_d 插值)</pre>
+
+  <h2>update() 顺序</h2>
+  <pre>1. step_reference_interpolation → q_d_active, q_d_dot_active
+2. step_reference_acceleration  → q_d_ddot_active
+3. fill q, v (+ gripper mimic)
+4. ddq[v_idx_i] = q_d_ddot_active[i]
+5. rnea → data.tau
+6. per joint: τ = tau + K*Δq + D*Δq̇ + friction
+7. τ_cmd = sign × scale × τ → effort IF</pre>
+
+  <h2>参考构型</h2>
+  <table>
+    <tr><th>reference_pose_mode</th><th>q_d_target 来源</th></tr>
+    <tr><td><code>capture_on_activate</code></td><td>激活时当前关节角</td></tr>
+    <tr><td><code>fixed</code></td><td><code>fixed_reference_positions</code></td></tr>
+  </table>
+
+  <h2>关键源文件</h2>
+  <pre>impedance_control_law.hpp     — 插值 + 力矩合成
+pinocchio_impedance_controller.cpp — ros2_control 生命周期
+test/test_impedance_torque.cpp    — 离线数值校验</pre>
+
+  <h2>vs Pinocchio GC</h2>
+  <table>
+    <tr><th>GC</th><th>阻抗</th></tr>
+    <tr><td><code>computeGeneralizedGravity</code></td><td><code>rnea(q,v,q̈_d)</code></td></tr>
+    <tr><td>无 K/D</td><td>K_j Δq + D_j Δq̇</td></tr>
+    <tr><td>可拖动示教</td><td>q_d 附近柔顺 hold</td></tr>
+  </table>
+
+  <h2>测试</h2>
+  <pre>colcon test --packages-select om_pinocchio_impedance_controller</pre>
+
+  <p class="cite">
+    <a href="../lessons/0011-omx-pinocchio-joint-impedance.html">第 11 课</a> ·
+    <a href="../lessons/0010-omx-pinocchio-gc-controller.html">第 10 课</a> ·
+    <a href="../docs/adr/0002-omx-pinocchio-joint-impedance.md">ADR-0002</a>
+  </p>
+
+</body>
+</html>

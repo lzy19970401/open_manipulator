@@ -1,0 +1,9 @@
+<library path="pinocchio_impedance_controller">
+  <class name="pinocchio_impedance_controller/PinocchioImpedanceController"
+         type="pinocchio_impedance_controller::PinocchioImpedanceController"
+         base_class_type="controller_interface::ControllerInterface">
+  <description>
+    Pinocchio joint-space impedance control on Arm joints with passive Gripper state for full q
+  </description>
+  </class>
+</library>
