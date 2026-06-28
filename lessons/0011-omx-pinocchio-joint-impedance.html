@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 11 课：关节空间阻抗 — 数学与代码</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #2563eb; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; }
+    .eq { font-family: var(--font-serif); background: #f5f5f5; padding: 0.75rem 1rem; margin: 1rem 0; overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 11 课 · 关节空间阻抗 · 约 20 分钟 ·
+    <a href="0010-omx-pinocchio-gc-controller.html">← 第 10 课（Pinocchio GC）</a> ·
+    <a href="0003-pinocchio-gravity-compensation.html">第 3 课（g(q)）</a> ·
+    <a href="../reference/pinocchio-joint-impedance.html">速查表</a>
+  </p>
+
+  <h1>关节空间阻抗控制：数学原理与代码对应</h1>
+
+  <p class="lead">
+    <a href="0010-omx-pinocchio-gc-controller.html">第 10 课</a> 的 GC 只前馈重力（可选 Coriolis/摩擦），关节近似「自由漂浮」。
+    本课解释 <strong>Pinocchio 关节阻抗控制器</strong> 如何在同一 effort 栈上，
+    对参考构型 q<sub>d</sub> 施加<strong>虚拟弹簧–阻尼</strong>，并用 <strong>computed torque</strong> 抵消机器人自身动力学。
+  </p>
+
+  <aside>
+    <strong>先修：</strong>刚体动力学方程、Pinocchio <code>rnea</code>、ros2_control effort 接口。
+    设计决策见 <a href="../docs/adr/0002-omx-pinocchio-joint-impedance.md">ADR-0002</a>。
+  </aside>
+
+  <h2>1. 从动力学方程出发</h2>
+
+  <p>开链机械臂在关节空间的欧拉–拉格朗日方程（无外力时）：</p>
+
+  <div class="eq">
+    M(q) q̈ + C(q, q̇) q̇ + g(q) = τ
+  </div>
+
+  <table class="flow">
+    <tr><th>符号</th><th>含义</th><th>Pinocchio</th></tr>
+    <tr><td>M(q)</td><td>对称正定惯量矩阵</td><td><code>crba</code> / 含于 <code>rnea</code></td></tr>
+    <tr><td>C(q,q̇)q̇</td><td>Coriolis + 离心项</td><td><code>nonLinearEffects</code> 或 <code>rnea(q,v,0)−g</code></td></tr>
+    <tr><td>g(q)</td><td>广义重力</td><td><code>computeGeneralizedGravity</code></td></tr>
+    <tr><td>τ</td><td>关节力矩（控制输入）</td><td>→ ros2_control <code>effort</code></td></tr>
+  </table>
+
+  <p>
+    主教材：<a href="https://hades.mech.northwestern.edu/images/0/0c/MR-tablet-v2.pdf">Modern Robotics</a> Ch.8；
+    Pinocchio 逆动力学：<a href="https://docs.ros.org/en/humble/p/pinocchio/generated/function_namespacepinocchio_1a79736c0fe06fdd6fc64ab02be0503785.html">rnea 文档</a>。
+  </p>
+
+  <h2>2. 关节空间阻抗：虚拟弹簧–阻尼</h2>
+
+  <p>在关节 i 上并联一个「虚拟」弹簧（刚度 K<sub>j,i</sub>）和阻尼（D<sub>j,i</sub>），平衡点为参考角 q<sub>d,i</sub>：</p>
+
+  <div class="eq">
+    τ<sub>imp,i</sub> = K<sub>j,i</sub> (q<sub>d,i</sub> − q<sub>i</sub>) + D<sub>j,i</sub> (q̇<sub>d,i</sub> − q̇<sub>i</sub>)
+  </div>
+
+  <p>物理直觉：偏离 q<sub>d</sub> 时产生恢复力矩；有速度时阻尼耗散能量，抑制振荡。Phase 1 默认 K<sub>j</sub> = [2, 2, 1.5, 1] N·m/rad，D<sub>j</sub> = [0.5, 0.5, 0.3, 0.2] N·m·s/rad。</p>
+
+  <p>与 GC 对比：GC 等价于 K<sub>j</sub> = D<sub>j</sub> = 0（仅前馈，无回弹）；阻抗在 q<sub>d</sub> 附近「软 hold」。</p>
+
+  <h2>3. Computed torque：为何用 rnea</h2>
+
+  <p>若只加 τ<sub>imp</sub> 而不补偿 M、C、g，真实关节会像「在可变惯量下挂弹簧」——手感随构型变化。标准做法是 <strong>computed torque</strong>（逆动力学前馈 + 阻抗反馈）：</p>
+
+  <div class="eq">
+    τ = M(q) q̈<sub>d</sub> + C(q,q̇) q̇ + g(q) + K<sub>j</sub>(q<sub>d</sub> − q) + D<sub>j</sub>(q̇<sub>d</sub> − q̇) + τ<sub>f</sub>
+  </div>
+
+  <p>Pinocchio 的递归牛顿–欧拉算法 <code>rnea(model, data, q, v, a)</code> 恰好计算</p>
+
+  <div class="eq">
+    rnea(q, v, a) = M(q) a + C(q,q̇)q̇ + g(q)
+  </div>
+
+  <p>因此令 a = q̈<sub>d</sub>（代码里向量 <code>ddq</code>），前馈项为 <code>data.tau</code>，再叠加阻抗与摩擦：</p>
+
+  <pre><code>pinocchio::rnea(model_, *data_, q, v, ddq);   // 前馈
+τ_i = data.tau[i_v]
+    + K_i * (q_d_active_i - q_i)
+    + D_i * (q_d_dot_active_i - qdot_i)
+    + τ_friction_i</code></pre>
+
+  <p>对应实现：<code class="file">impedance_control_law.hpp</code> 中 <code>compute_joint_impedance_torque</code>；
+  主循环见 <code class="file">pinocchio_impedance_controller.cpp</code> 第 148–180 行。</p>
+
+  <h2>4. 参考构型 q<sub>d</sub> 与平滑过渡</h2>
+
+  <h3><span class="step-num">A</span> 两种模式</h3>
+  <table class="flow">
+    <tr><th>模式</th><th>行为</th><th>代码</th></tr>
+    <tr>
+      <td><code>capture_on_activate</code></td>
+      <td>激活瞬间把当前 q 锁为 q<sub>d,target</sub></td>
+      <td><code>initialize_reference_target_from_mode()</code></td>
+    </tr>
+    <tr>
+      <td><code>fixed</code></td>
+      <td>yaml 指定四关节角（如 ready pose）</td>
+      <td><code>fixed_reference_positions</code></td>
+    </tr>
+  </table>
+
+  <h3><span class="step-num">B</span> 插值器（Phase 2 接 topic 前已预埋）</h3>
+  <p>q<sub>d</sub> 不允许阶跃，否则 M(q)Δq̈ 与 KΔq 会在一帧内产生力矩尖峰。内部维护：</p>
+  <ul>
+    <li><code>q_d_target</code> — 目标（Phase 1 仅在 activate 设置）</li>
+    <li><code>q_d_active</code> — 每周期实际用于控制的参考</li>
+  </ul>
+
+  <div class="eq">
+    |q<sub>d,active,i</sub> − q<sub>d,target,i</sub>| ≤ v<sub>max,i</sub> · Δt &nbsp;（逐关节限速，默认 0.5 rad/s）
+  </div>
+
+  <pre><code>step_reference_interpolation(q_d_active, q_d_dot_active, q_d_target, max_velocity, dt);
+step_reference_acceleration(q_d_ddot_active, q_d_dot_active, q_d_dot_prev, dt);</code></pre>
+
+  <p>q̇<sub>d</sub>、q̈<sub>d</sub> 由差分得到，填入 <code>ddq</code> 供 <code>rnea</code> — 参考轨迹移动时前馈仍一致。</p>
+
+  <h2>5. 摩擦与硬件映射</h2>
+
+  <p>与 Pinocchio GC 相同线性模型（可选）：</p>
+  <div class="eq">
+    τ<sub>f,i</sub> = Fv<sub>i</sub> q̇<sub>i</sub> + Fc<sub>i</sub> sign<sub>ε</sub>(q̇<sub>i</sub>)
+  </div>
+  <p><code>sign_ε</code>：|q̇| &lt; deadzone 时为 0，避免静摩擦抖动。见 <code>sign_with_deadzone</code>。</p>
+
+  <p>下发舵机前：</p>
+  <div class="eq">
+    τ<sub>cmd,i</sub> = s<sub>i</sub> · α<sub>i</sub> · τ<sub>phys,i</sub>
+  </div>
+  <p><code>effort_sign_flips</code> = s<sub>i</sub>，<code>torque_scaling_factors</code> = α<sub>i</sub>（与 GC yaml 同源）。</p>
+
+  <h2>6. 一帧 update() 完整数据流</h2>
+
+  <figure>
+    <svg viewBox="0 0 560 130" width="560" height="130" aria-label="阻抗控制单帧数据流">
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#333"/></marker></defs>
+      <rect x="4" y="48" width="72" height="34" fill="#eee" stroke="#333"/>
+      <text x="40" y="68" text-anchor="middle" font-size="8" font-family="sans-serif">插值 q_d</text>
+      <line x1="76" y1="65" x2="92" y2="65" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="94" y="48" width="72" height="34" fill="#eee" stroke="#333"/>
+      <text x="130" y="62" text-anchor="middle" font-size="8" font-family="sans-serif">读 q, q̇</text>
+      <text x="130" y="74" text-anchor="middle" font-size="7" font-family="sans-serif">+ gripper</text>
+      <line x1="166" y1="65" x2="182" y2="65" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="184" y="48" width="88" height="34" fill="#dcfce7" stroke="#15803d"/>
+      <text x="228" y="68" text-anchor="middle" font-size="8" font-family="sans-serif">rnea(q,v,q̈_d)</text>
+      <line x1="272" y1="65" x2="288" y2="65" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="290" y="48" width="88" height="34" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="334" y="62" text-anchor="middle" font-size="8" font-family="sans-serif">+ KΔq</text>
+      <text x="334" y="74" text-anchor="middle" font-size="8" font-family="sans-serif">+ DΔq̇</text>
+      <line x1="378" y1="65" x2="394" y2="65" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="396" y="48" width="72" height="34" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="432" y="68" text-anchor="middle" font-size="8" font-family="sans-serif">+ Fv/Fc</text>
+      <line x1="468" y1="65" x2="484" y2="65" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="486" y="48" width="70" height="34" fill="#fce7f3" stroke="#be185d"/>
+      <text x="521" y="68" text-anchor="middle" font-size="8" font-family="sans-serif">sign×scale</text>
+    </svg>
+    <figcaption>100 Hz · 包 <code>om_pinocchio_impedance_controller</code></figcaption>
+  </figure>
+
+  <h2>7. 数学 ↔ 代码对照表</h2>
+
+  <table class="flow">
+    <tr><th>数学量</th><th>成员 / 函数</th><th>文件</th></tr>
+    <tr><td>q, q̇</td><td><code>fill_configuration_vector</code>, <code>fill_velocity_vector</code></td><td><code>pinocchio_impedance_controller.cpp</code></td></tr>
+    <tr><td>q̈<sub>d</sub></td><td><code>q_d_ddot_active_</code> → <code>ddq</code></td><td>同上</td></tr>
+    <tr><td>M q̈<sub>d</sub>+C q̇+g</td><td><code>pinocchio::rnea</code> → <code>data_->tau</code></td><td>同上</td></tr>
+    <tr><td>K<sub>j</sub>, D<sub>j</sub></td><td><code>params_.stiffness</code>, <code>damping</code></td><td>parameters yaml</td></tr>
+    <tr><td>q<sub>d,active</sub></td><td><code>q_d_active_</code></td><td><code>impedance_control_law.hpp</code></td></tr>
+    <tr><td>τ<sub>f</sub></td><td><code>compute_friction_torque</code></td><td><code>impedance_control_law.hpp</code></td></tr>
+    <tr><td>τ<sub>cmd</sub></td><td><code>joint_command_interface_</code> effort</td><td><code>update()</code></td></tr>
+  </table>
+
+  <h2>8. 与 GC 栈的平行关系</h2>
+
+  <table class="flow">
+    <tr><th></th><th>Pinocchio GC</th><th>Pinocchio 阻抗</th></tr>
+    <tr><td>包</td><td><code>om_pinocchio_gravity_compensation_controller</code></td><td><code>om_pinocchio_impedance_controller</code></td></tr>
+    <tr><td>前馈</td><td>G(q) 或 nle(q,v)</td><td>rnea(q,v,q̈_d)</td></tr>
+    <tr><td>反馈</td><td>无</td><td>K<sub>j</sub>Δq + D<sub>j</sub>Δq̇</td></tr>
+    <tr><td>Launch</td><td><code>..._pinocchio_gravity_compensation.launch.py</code></td><td><code>..._pinocchio_impedance.launch.py</code></td></tr>
+  </table>
+
+  <h2>9. 自测（检索练习）</h2>
+
+  <p>不看上文，尝试写出 Phase 1 hold 点（q̇<sub>d</sub>=0, q̈<sub>d</sub>=0）时的完整 τ 公式，并说明 <code>rnea</code> 在该情况下等价于哪一项之和。</p>
+
+  <details>
+    <summary>参考答案</summary>
+    <div class="eq">
+      τ = C(q,q̇)q̇ + g(q) + K<sub>j</sub>(q<sub>d</sub> − q) − D<sub>j</sub> q̇ + τ<sub>f</sub>
+    </div>
+    <p><code>rnea(q,v,0) = C(q,q̇)q̇ + g(q)</code>（无 q̈ 项）。</p>
+  </details>
+
+  <h2>10. 运行与测试</h2>
+  <pre><code># 实机 / mock
+ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_impedance.launch.py
+
+# Gazebo
+ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_impedance_gazebo.launch.py
+
+# 单元测试
+colcon test --packages-select om_pinocchio_impedance_controller</code></pre>
+
+  <aside>
+    <strong>有疑问？</strong>在 Cursor 里继续问 Agent：「为什么 hold 时还要补偿 C(q,q̇)q̇？」
+    「K/D 调大调小各什么手感？」—— 教师 Agent 可结合实机现象解释。
+  </aside>
+
+  <p class="cite">
+    延伸阅读：
+    <a href="https://hades.mech.northwestern.edu/images/7/73/MR-ch08.pdf">Modern Robotics Ch.8 动力学</a> ·
+    Hogan, <em>Impedance Control: An Approach to Manipulation</em> (1985) — 任务空间阻抗原论文 ·
+    <a href="../reference/pinocchio-joint-impedance.html">速查表</a> ·
+    <a href="../docs/adr/0002-omx-pinocchio-joint-impedance.md">ADR-0002</a>
+  </p>
+
+</body>
+</html>

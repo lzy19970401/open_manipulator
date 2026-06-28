@@ -10,6 +10,10 @@
   Ch.4–7 系统课。
 - [Pinocchio: computeGeneralizedGravity API](https://docs.ros.org/en/humble/p/pinocchio/generated/function_namespacepinocchio_1a79736c0fe06fdd6fc64ab02be0503785.html)
   g(q) 官方定义；等价于 `rnea(model, data, q, 0, 0)`。Use for: 重力补偿核心调用。
+- [Pinocchio RNEA / inverse dynamics](https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/namespacepinocchio.html)
+  `rnea` = M(q)a + C(q,v)v + g(q)。Use for: 阻抗 computed torque 前馈（第 11 课）。
+- [Modern Robotics Ch.8 — Dynamics (PDF)](https://hades.mech.northwestern.edu/images/7/73/MR-ch08.pdf)
+  M(q)q̈ + C q̇ + g = τ。Use for: 阻抗控制数学基础。
 - [Pinocchio Overview — URDF + RNEA](https://github.com/stack-of-tasks/pinocchio/blob/master/doc/Overview.md)
   从 URDF 建 Model。Use for: Pinocchio 环境搭建。
 - [Pinocchio inverse-dynamics.cpp 样例](https://docs.ros.org/en/noetic/api/pinocchio/html/inverse-dynamics_8cpp_source.html)

@@ -88,6 +88,54 @@ _Avoid_: GC mode（未限定型号时）、leader mode（OMX 无 follower 同步
 与 **Gravity compensation control mode** 并行、互斥的另一套 GC 栈：动力学后端为 Pinocchio，配置目录为 `open_manipulator_x_compensation_pinocchio`；前馈 τ≈G(q) 并可选用辨识得到的 Fv/Fc 摩擦补偿；独立 launch 与控制器插件，不修改既有 KDL GC 路径。
 _Avoid_: Phase 2 backend swap（指在原 KDL 控制器内替换后端时）、pinocchio GC（未与 KDL GC 区分时）
 
+**Joint-space impedance control mode（关节空间阻抗控制模式）**:
+通过独立 launch 启动的互斥配置：Arm 四关节走 **effort** 接口，在 **Joint-space** 对参考构型 q_d 施加虚拟弹簧-阻尼（K_j、D_j），使末端附近呈现可配置的柔顺感；动力学后端为 Pinocchio；不含 **Gripper** 阻抗。与 **Standard control launch**、**Gravity compensation control mode** 及 **Pinocchio gravity compensation control mode** 二选一，不可同时加载。控制器包、配置目录与 launch 与 Pinocchio GC 栈 **完全平行**（`om_pinocchio_impedance_controller`、`open_manipulator_x_impedance_pinocchio`）。
+_Avoid_: compliance mode（未区分关节/任务空间时）、spring mode（与 **SpringActuatorController** 混淆时）
+
+**Pinocchio impedance simulation launch（Pinocchio 阻抗仿真 launch）**:
+**Joint-space impedance control mode** 的 Gazebo 入口，与实机 launch 互斥对应；Phase 1 与实机 launch 同步交付。
+_Avoid_: GC gazebo launch（指 KDL **Gravity compensation control mode** 仿真入口时）
+
+**Impedance reference pose（阻抗参考构型）**:
+**Joint-space impedance control mode** 下虚拟弹簧-阻尼的平衡点 q_d（四关节角）；Arm 被外力偏离 q_d 时产生恢复力矩，外力撤除后回到 q_d 附近。
+_Avoid_: setpoint（实现层术语）、target pose（与 **Task-space motion** 混淆时）
+
+**Reference pose capture（参考构型捕获）**:
+控制器激活时将当前关节角 q 锁定为 q_d 的默认行为；yaml 可通过 **Fixed reference pose** 覆盖，跳过捕获。
+_Avoid_: home on start（指 bringup **Ready pose** 序列时）
+
+**Fixed reference pose（固定参考构型）**:
+yaml 中显式指定的四关节 q_d，用于可重复实验；与 **Reference pose capture** 互斥选用。
+_Avoid_: named pose（指 SRDF **Named pose** 名引用而非关节角数组时）
+
+**Reference pose transition（参考构型过渡）**:
+运行时 q_d 变更时，目标 q_d 须经平滑轨迹插值到达，禁止瞬时跳变。Phase 1 实现内部 **Reference pose interpolator**（`q_d_active` 向 `q_d_target` 一阶限速逼近），但不接外部 topic；Phase 2 仅需写入 `q_d_target`。
+_Avoid_: step setpoint（瞬时改 q_d 时）
+
+**Reference pose interpolator（参考构型插值器）**:
+每控制周期将 `q_d_active` 向 `q_d_target` 独立限速移动；默认 `reference_transition_max_velocity` 为 `[0.5, 0.5, 0.5, 0.5]` rad/s。Phase 1 仅在 activate/yaml 加载时设 `q_d_target`，二者通常相等。
+_Avoid_: trajectory planner（指 MoveIt 轨迹规划时）
+
+**Virtual joint stiffness（虚拟关节刚度 K_j）**:
+**Joint-space impedance control mode** 下每关节弹簧增益（N·m/rad）；Phase 1 默认 `[2.0, 2.0, 1.5, 1.0]`，远端关节略低以减轻腕部抖动。
+_Avoid_: Kp（未区分关节/任务空间时）、position gain（实现层 PID 术语）
+
+**Virtual joint damping（虚拟关节阻尼 D_j）**:
+**Joint-space impedance control mode** 下每关节阻尼增益（N·m·s/rad）；Phase 1 默认 `[0.5, 0.5, 0.3, 0.2]`，约为临界阻尼的 1/4～1/2，抑制回弹过冲。
+_Avoid_: Kd（未区分关节/任务空间时）、velocity gain（实现层 PID 术语）
+
+**Impedance unit verification（阻抗单元校验）**:
+Phase 1 离线测试：固定 (q, q̇, q_d) 验证 computed torque 前馈、K_j/D_j 阻抗项及可选摩擦叠加的数值正确性；与 Pinocchio 直接调用对比。Gazebo 仅作手动 smoke，不纳入 CI 自动化。
+_Avoid_: hardware regression（指实机 hold 评测时）
+
+**Impedance dynamics feedforward（阻抗动力学前馈）**:
+**Joint-space impedance control mode** 下除 K_j、D_j 虚拟阻抗项外、由 Pinocchio 计算的关节力矩前馈；Phase 1 采用完整 **Computed torque**（M(q)q̈_d + G(q) + C(q,q̇)q̇），q_d 恒定时 q̈_d = 0 但保留 M(q)q̈_d 项以便后续时变参考轨迹。
+_Avoid_: gravity overlay（指仅 G(q) 的 GC 前馈时）、PD only（无前馈时）
+
+**Impedance friction overlay（阻抗摩擦叠加）**:
+**Joint-space impedance control mode** 下可选的 Fv/Fc 前馈叠加，参数语义与 **Pinocchio gravity compensation control mode** 相同（含 `enable_friction_compensation`、Fv/Fc 数组与 velocity deadzone），不另起一套辨识结果。
+_Avoid_: separate friction yaml（指阻抗专用摩擦参数文件时）
+
 **Torque enable（力矩使能）**:
 Dynamixel 舵机是否输出 holding torque 的安全开关；禁用时关节可手动拖动，启用时执行位置/电流控制。
 _Avoid_: motor on/off, power
