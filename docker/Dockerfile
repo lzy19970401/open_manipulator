@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libglfw3-dev \
     ros-${ROS_DISTRO}-image-transport-plugins \
     ros-${ROS_DISTRO}-pinocchio \
+    ros-${ROS_DISTRO}-proxsuite \
     ros-${ROS_DISTRO}-usb-cam \
     vim \
     nano \

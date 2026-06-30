@@ -1,0 +1,119 @@
+pinocchio_task_impedance_controller:
+  joints: {
+    type: string_array,
+    default_value: [],
+    description: "Arm joint names receiving effort commands (joint1-joint4)",
+    read_only: true,
+    validation: {
+      unique<>: null,
+    }
+  }
+  passive_state_joints: {
+    type: string_array,
+    default_value: [],
+    description: "Passive joints whose position state is read to assemble full q (e.g. gripper_left_joint)",
+    read_only: true,
+    validation: {
+      unique<>: null,
+    }
+  }
+  command_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "Command interfaces provided by the hardware interface for Arm joints",
+    read_only: true,
+  }
+  state_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "State interfaces provided by the hardware for Arm joints",
+    read_only: true,
+  }
+  base_frame: {
+    type: string,
+    default_value: "link1",
+    description: "Reference frame for Impedance reference position x_d, FK, and Jacobian",
+  }
+  end_effector_frame: {
+    type: string,
+    default_value: "end_effector_link",
+    description: "End effector frame for task-space impedance",
+  }
+  reference_position_mode: {
+    type: string,
+    default_value: "capture_on_activate",
+    description: "capture_on_activate locks x_d at activation; fixed uses fixed_reference_position",
+    validation: {
+      one_of<>: [["capture_on_activate", "fixed"]],
+    }
+  }
+  fixed_reference_position: {
+    type: double_array,
+    default_value: [0.15, 0.0, 0.12],
+    description: "End effector position [x,y,z] in link1 frame (m) when reference_position_mode is fixed"
+  }
+  stiffness: {
+    type: double_array,
+    default_value: [200.0, 200.0, 200.0],
+    description: "Virtual task stiffness K_p per axis (N/m)"
+  }
+  damping: {
+    type: double_array,
+    default_value: [20.0, 20.0, 20.0],
+    description: "Virtual task damping D_p per axis (N·s/m)"
+  }
+  reference_transition_max_velocity: {
+    type: double_array,
+    default_value: [0.1, 0.1, 0.1],
+    description: "Per-axis max rate (m/s) for x_d_active toward x_d_target"
+  }
+  null_space_stiffness: {
+    type: double_array,
+    default_value: [0.5, 0.5, 0.5, 0.5],
+    description: "Virtual null-space stiffness K_null per Arm joint (N·m/rad)"
+  }
+  joint_acceleration_limits: {
+    type: double_array,
+    default_value: [10.0, 10.0, 10.0, 10.0],
+    description: "Symmetric |qdd| limit per Arm joint (rad/s^2) enforced in ProxQP"
+  }
+  qp_task_weight: {
+    type: double,
+    default_value: 1.0,
+    description: "Scalar weight on task-space acceleration cost in ProxQP"
+  }
+  qp_null_weight: {
+    type: double,
+    default_value: 1.0,
+    description: "Scalar weight on null-space acceleration cost in ProxQP"
+  }
+  enable_friction_compensation: {
+    type: bool,
+    default_value: false,
+    description: "When true, add Fv*qdot + Fc*sign_eps(qdot) on Arm joints before sign/scale"
+  }
+  viscous_friction_coefficients: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Viscous friction Fv per Arm joint (Nm/(rad/s))"
+  }
+  coulomb_friction_coefficients: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Coulomb friction Fc per Arm joint (Nm)"
+  }
+  friction_velocity_deadzone: {
+    type: double,
+    default_value: 0.001,
+    description: "Velocity deadzone (rad/s) for Coulomb friction sign at rest"
+  }
+  effort_sign_flips: {
+    type: double_array,
+    default_value: [1.0, 1.0, 1.0, 1.0],
+    description: "Per-joint sign applied after task impedance torque computation",
+  }
+  torque_scaling_factors: {
+    type: double_array,
+    default_value: [1.0, 1.0, 1.0, 1.0],
+    description: "Per-joint magnitude scaling applied after effort_sign_flips",
+  }

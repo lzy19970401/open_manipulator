@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+#
+# Copyright 2026 OpenMANIPULATOR contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# OpenMANIPULATOR-X Pinocchio task-space impedance control mode launch.
+#
+# Mutually exclusive with Standard control launch, GC launches, and joint-space impedance.
+# Phase 1: x_d_target is set only via activate / yaml (no external Cartesian topic).
+#
+# Hardware:
+#   ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_task_impedance.launch.py
+# Mock hardware CI smoke:
+#   ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_task_impedance.launch.py use_mock_hardware:=true
+#
+# Gazebo (manual hold-and-drag smoke, not CI):
+#   ros2 launch open_manipulator_bringup open_manipulator_x_pinocchio_task_impedance_gazebo.launch.py
+#
+# Shutdown safety (hardware only): on exit the controller zeros Arm effort commands,
+# then gc_shutdown_torque_disable disables torque on Arm actuators (Dynamixel IDs 11-14).
+
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import UnlessCondition
+from launch.substitutions import Command
+from launch.substitutions import FindExecutable
+from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PythonExpression
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    declared_arguments = [
+        DeclareLaunchArgument(
+            'prefix',
+            default_value='""',
+            description='Prefix of the joint and link names',
+        ),
+        DeclareLaunchArgument(
+            'use_sim',
+            default_value='false',
+            description='Start robot in Gazebo simulation.',
+        ),
+        DeclareLaunchArgument(
+            'use_mock_hardware',
+            default_value='false',
+            description='Use mock hardware mirroring command (CI smoke).',
+        ),
+        DeclareLaunchArgument(
+            'mock_sensor_commands',
+            default_value='false',
+            description='Enable mock sensor commands.',
+        ),
+        DeclareLaunchArgument(
+            'port_name',
+            default_value='/dev/ttyUSB0',
+            description='Port name for hardware connection.',
+        ),
+        DeclareLaunchArgument(
+            'ros2_control_type',
+            default_value='open_manipulator_x_current',
+            description='Type of ros2_control (effort variant for Arm joints).',
+        ),
+        DeclareLaunchArgument(
+            'reference_position_mode',
+            default_value='capture_on_activate',
+            description='capture_on_activate or fixed (uses fixed_reference_position in yaml).',
+        ),
+        DeclareLaunchArgument(
+            'enable_friction_compensation',
+            default_value='false',
+            description='Enable Fv/Fc friction overlay on Arm joints (yaml holds sysid placeholders).',
+        ),
+    ]
+
+    prefix = LaunchConfiguration('prefix')
+    use_sim = LaunchConfiguration('use_sim')
+    use_mock_hardware = LaunchConfiguration('use_mock_hardware')
+    mock_sensor_commands = LaunchConfiguration('mock_sensor_commands')
+    port_name = LaunchConfiguration('port_name')
+    ros2_control_type = LaunchConfiguration('ros2_control_type')
+    reference_position_mode = LaunchConfiguration('reference_position_mode')
+    enable_friction_compensation = LaunchConfiguration('enable_friction_compensation')
+
+    urdf_command = Command([
+        PathJoinSubstitution([FindExecutable(name='xacro')]),
+        ' ',
+        PathJoinSubstitution([
+            FindPackageShare('open_manipulator_description'),
+            'urdf',
+            'open_manipulator_x',
+            'open_manipulator_x.urdf.xacro',
+        ]),
+        ' ',
+        'prefix:=',
+        prefix,
+        ' ',
+        'use_sim:=',
+        use_sim,
+        ' ',
+        'use_mock_hardware:=',
+        use_mock_hardware,
+        ' ',
+        'mock_sensor_commands:=',
+        mock_sensor_commands,
+        ' ',
+        'port_name:=',
+        port_name,
+        ' ',
+        'ros2_control_type:=',
+        ros2_control_type,
+    ])
+    robot_description = ParameterValue(urdf_command, value_type=str)
+
+    controller_manager_config = PathJoinSubstitution([
+        FindPackageShare('open_manipulator_bringup'),
+        'config',
+        'open_manipulator_x_task_impedance_pinocchio',
+        'hardware_controller_manager.yaml',
+    ])
+
+    control_node = Node(
+        package='controller_manager',
+        executable='ros2_control_node',
+        parameters=[
+            {'robot_description': robot_description},
+            controller_manager_config,
+            {
+                'pinocchio_task_impedance_controller': {
+                    'ros__parameters': {
+                        'reference_position_mode': reference_position_mode,
+                        'enable_friction_compensation': enable_friction_compensation,
+                    }
+                }
+            },
+        ],
+        output='both',
+        condition=UnlessCondition(use_sim),
+    )
+
+    robot_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=[
+            'pinocchio_task_impedance_controller',
+            'joint_state_broadcaster',
+        ],
+        output='both',
+        parameters=[{'robot_description': robot_description}],
+    )
+
+    robot_state_publisher_node = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        parameters=[{'robot_description': robot_description, 'use_sim_time': use_sim}],
+        output='both',
+    )
+
+    gc_shutdown_torque_disable_node = Node(
+        package='open_manipulator_bringup',
+        executable='gc_shutdown_torque_disable',
+        parameters=[{
+            'controller_transition_topic':
+                '/pinocchio_task_impedance_controller/transition_event',
+        }],
+        output='screen',
+        condition=UnlessCondition(
+            PythonExpression([
+                "'", use_sim, "' == 'true' or '",
+                use_mock_hardware, "' == 'true'",
+            ])
+        ),
+    )
+
+    return LaunchDescription(
+        declared_arguments
+        + [
+            control_node,
+            robot_controller_spawner,
+            robot_state_publisher_node,
+            gc_shutdown_torque_disable_node,
+        ]
+    )

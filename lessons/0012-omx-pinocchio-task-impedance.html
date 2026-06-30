@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 12 课：任务空间阻抗 — 数学推导与代码</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #2563eb; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; }
+    .eq { font-family: var(--font-serif); background: #f5f5f5; padding: 0.75rem 1rem; margin: 1rem 0; overflow-x: auto; line-height: 1.8; }
+    .eq-inline { font-family: var(--font-serif); background: #f5f5f5; padding: 0.1rem 0.35rem; }
+    h3 { font-size: 1.05rem; margin-top: 1.5rem; }
+    .toc { font-family: var(--font-sans); font-size: 0.9rem; background: var(--card); border: 1px solid var(--border); padding: 1rem 1.25rem; margin: 1.5rem 0; }
+    .toc ol { margin: 0.5rem 0 0 1.2rem; padding: 0; }
+    .toc li { margin: 0.25rem 0; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 12 课 · 任务空间阻抗 · 约 35 分钟 ·
+    <a href="0011-omx-pinocchio-joint-impedance.html">← 第 11 课（关节阻抗）</a> ·
+    <a href="0002-spatial-wrench-momentum-acceleration.html">第 2 课（Wrench / JᵀF）</a> ·
+    <a href="../reference/pinocchio-task-impedance.html">速查表</a>
+  </p>
+
+  <h1>任务空间阻抗控制：完整数学推导与代码对应</h1>
+
+  <p class="lead">
+    <a href="0011-omx-pinocchio-joint-impedance.html">第 11 课</a> 在<strong>关节空间</strong>对 q<sub>d</sub> 挂虚拟弹簧。
+    本课讲解 <strong>Task-space impedance control mode</strong>：在 <strong>link1 基座系</strong>对末端<strong>三维位置</strong> x<sub>d</sub> 挂弹簧–阻尼，
+    经 J<sub>p</sub><sup>T</sup> 映射到关节力矩，并用 QP 求 q̈<sub>d</sub> 做 computed torque 前馈与零空间姿态偏好。
+  </p>
+
+  <aside>
+    <strong>先修：</strong>关节阻抗（rnea）、静力 τ = J<sup>T</sup>F（<a href="0002-spatial-wrench-momentum-acceleration.html">第 2 课</a>）、4 DOF 冗余臂直觉。
+    设计决策见 <a href="../docs/adr/0003-omx-pinocchio-task-space-impedance.md">ADR-0003</a>。
+    源码包：<code>om_pinocchio_task_impedance_controller</code>。
+  </aside>
+
+  <nav class="toc">
+    <strong>目录</strong>
+    <ol>
+      <li><a href="#s1">问题设定：4 关节控 3 维位置</a></li>
+      <li><a href="#s2">运动学：x、J<sub>p</sub> 与 link1 系</a></li>
+      <li><a href="#s3">笛卡尔虚拟弹簧–阻尼：F</a></li>
+      <li><a href="#s4">虚功原理：τ<sub>task</sub> = J<sub>p</sub><sup>T</sup> F</a></li>
+      <li><a href="#s5">任务加速度与 a<sub>des</sub> 推导</a></li>
+      <li><a href="#s6">零空间姿态偏好 q̈<sub>null</sub></a></li>
+      <li><a href="#s7">QP 求 q̈<sub>d</sub>：从代价函数到 H、g</a></li>
+      <li><a href="#s8">Computed torque：rnea + 反馈 + 摩擦</a></li>
+      <li><a href="#s9">参考位置 x<sub>d</sub> 管理与插值</a></li>
+      <li><a href="#s10">ROS 插件层：update() 一帧数据流</a></li>
+      <li><a href="#s11">完整数学 ↔ 代码对照表</a></li>
+      <li><a href="#s12">与关节阻抗、v1 简化版对比</a></li>
+    </ol>
+  </nav>
+
+  <!-- ========== 1 ========== -->
+  <h2 id="s1">1. 问题设定：4 关节控 3 维位置</h2>
+
+  <p>OpenMANIPULATOR-X 臂有 4 个转动关节，Phase 1 只控制末端执行器（EE）的<strong>位置</strong> x ∈ ℝ³，不控制姿态。因此：</p>
+
+  <div class="eq">
+    任务维数 m = 3 &nbsp;·&nbsp; 关节维数 n = 4 &nbsp;→&nbsp; 冗余度 = n − m = 1
+  </div>
+
+  <p>冗余意味着：同一个末端位置 x 通常对应无穷多组关节角 q。若只施加笛卡尔弹簧而不约束零空间，拖动示教时肘部构型可能漂移。Phase 1 用 <strong>Null-space posture preference</strong> 把关节拉回激活时捕获的 q<sub>capture</sub>。</p>
+
+  <p>关节空间动力学（与第 11 课相同）：</p>
+  <div class="eq">
+    M(q) q̈ + C(q, q̇) q̇ + g(q) = τ
+  </div>
+
+  <p>控制律最终输出 τ，经 ros2_control <code>effort</code> 接口下发四关节。</p>
+
+  <!-- ========== 2 ========== -->
+  <h2 id="s2">2. 运动学：x、J<sub>p</sub> 与 link1 系</h2>
+
+  <h3><span class="step-num">2.1</span> 正运动学</h3>
+  <p>记 <strong>link1</strong> 为基座坐标系（参数 <code>base_frame: link1</code>），EE 帧为 <code>end_effector_link</code>。Pinocchio 给出世界系下各帧位姿 <sup>o</sup>M<sub>f</sub>，则 EE 在 link1 系下的位置为：</p>
+
+  <div class="eq">
+    x(q) = <sup>1</sup>R<sub>o</sub><sup>T</sup> · ( <sup>o</sup>p<sub>ee</sub> − <sup>o</sup>p<sub>link1</sub> )
+    &nbsp;&nbsp;或等价地&nbsp;&nbsp;
+    x = <sup>link1</sup>T<sub>ee</sub> 的平移部分
+  </div>
+
+  <p>代码（<code class="file">task_impedance_control_law.cpp</code> L18–27）：</p>
+  <pre><code>pinocchio::forwardKinematics(model, data, q);
+pinocchio::updateFramePlacements(model, data);
+return data.oMf[base_frame_id].actInv(data.oMf[ee_frame_id]).translation();</code></pre>
+  <p>函数名：<code>compute_ee_position_in_base_frame</code>。</p>
+
+  <h3><span class="step-num">2.2</span> 位置雅可比</h3>
+  <p>对 q 求导（速度层面）：</p>
+  <div class="eq">
+    ẋ = J<sub>p</sub>(q) q̇ &nbsp;&nbsp;∈ ℝ³ˣⁿᵛ
+  </div>
+  <p>实现步骤：</p>
+  <ol>
+    <li>Pinocchio 取 EE 的 6×n<sub>v</sub> 雅可比 J<sub>6</sub>（<code>LOCAL_WORLD_ALIGNED</code>，即线速度在世界系、随 EE 取向）。</li>
+    <li>取前 3 行得线速度部分，再左乘 <sup>link1</sup>R<sub>world</sub> = R<sub>base</sub><sup>T</sup>，把线速度表达到 link1 系。</li>
+  </ol>
+  <pre><code>// task_impedance_control_law.cpp L42–47
+pinocchio::getFrameJacobian(..., LOCAL_WORLD_ALIGNED, J6);
+J_p = R_base_world.transpose() * J6.topRows&lt;3&gt;();</code></pre>
+  <p>函数名：<code>compute_position_jacobian_in_base_frame</code>。末端线速度：<code>ẋ = J_p * v</code>（L186）。</p>
+
+  <h3><span class="step-num">2.3</span> 雅可比时间导数 J̇<sub>p</sub></h3>
+  <p>对 ẋ = J<sub>p</sub> q̇ 两边对时间求导（q 与 q̇ 都是 t 的函数）：</p>
+  <div class="eq">
+    ẍ = J̇<sub>p</sub>(q, q̇) q̇ + J<sub>p</sub>(q) q̈
+  </div>
+  <p>Pinocchio：<code>getFrameJacobianTimeVariation</code> 给出 ∂J/∂t · q̇ 对应的 6 维项，同样投影到 link1 前三行 → <code>dJ_p</code>。</p>
+  <pre><code>// L64–69
+pinocchio::getFrameJacobianTimeVariation(..., dJ6);
+dJ_p = R_base_world.transpose() * dJ6.topRows&lt;3&gt;();</code></pre>
+
+  <!-- ========== 3 ========== -->
+  <h2 id="s3">3. 笛卡尔虚拟弹簧–阻尼：F</h2>
+
+  <p>在 link1 系对 EE 位置误差施加对角刚度 K<sub>p</sub> ∈ ℝ³ 与阻尼 D<sub>p</sub> ∈ ℝ³（逐元素，单位 N/m、N·s/m）：</p>
+
+  <div class="eq">
+    F = K<sub>p</sub> ⊙ (x<sub>d,active</sub> − x) + D<sub>p</sub> ⊙ (ẋ<sub>d,active</sub> − ẋ)
+  </div>
+
+  <p>⊙ 表示逐元素乘；代码用 Eigen 的 <code>cwiseProduct</code>：</p>
+  <pre><code>// task_impedance_control_law.hpp — compute_cartesian_spring_force (inline)
+return K_p.cwiseProduct(x_d - x) + D_p.cwiseProduct(x_d_dot - x_dot);</code></pre>
+
+  <p>默认 yaml：<code>stiffness: [200, 200, 200]</code>，<code>damping: [20, 20, 20]</code>。平衡点附近约 2 N / cm 刚度量级。</p>
+
+  <p><strong>物理含义：</strong>F 是施加在 EE 上的<strong>笛卡尔力</strong>（非力矩），把 EE「拉向」x<sub>d</sub>。这与关节空间弹簧 K<sub>j</sub>Δq 不同——后者直接加在广义坐标上。</p>
+
+  <!-- ========== 4 ========== -->
+  <h2 id="s4">4. 虚功原理：τ<sub>task</sub> = J<sub>p</sub><sup>T</sup> F</h2>
+
+  <p>设 EE 受到笛卡尔力 F（link1 系），产生虚位移 δx = J<sub>p</sub> δq。虚功 δW = F<sup>T</sup> δx = F<sup>T</sup> J<sub>p</sub> δq 应等于关节虚功 τ<sup>T</sup> δq，对任意 δq 成立，故：</p>
+
+  <div class="eq">
+    τ<sub>task</sub> = J<sub>p</sub><sup>T</sup> F &nbsp;∈ ℝⁿᵛ
+  </div>
+
+  <p>只有 Arm 四关节对应的分量非零并写入 effort；Gripper 不参与阻抗。</p>
+
+  <pre><code>// task_impedance_control_law.cpp L221–222（完整版）
+const Eigen::VectorXd tau_full = data.tau + J_p.transpose() * result.cartesian_force;</code></pre>
+
+  <p>此处 <code>data.tau</code> 来自 rnea 前馈（下一节），<code>J_p.transpose() * F</code> 是笛卡尔反馈项。</p>
+
+  <!-- ========== 5 ========== -->
+  <h2 id="s5">5. 任务加速度与 a<sub>des</sub> 推导</h2>
+
+  <h3><span class="step-num">5.1</span> 期望任务加速度</h3>
+  <p>若希望 EE 线加速度跟踪参考 ẍ<sub>d,active</sub>，由 ẍ = J̇<sub>p</sub> q̇ + J<sub>p</sub> q̈ 解出使 J<sub>p</sub> q̈ 匹配的<strong>任务空间期望加速度</strong>：</p>
+
+  <div class="eq">
+    J<sub>p</sub> q̈ = ẍ<sub>d,active</sub> − J̇<sub>p</sub> q̇
+    &nbsp;&nbsp;⇒&nbsp;&nbsp;
+    a<sub>des</sub> ≜ ẍ<sub>d,active</sub> − J̇<sub>p</sub> q̇
+  </div>
+
+  <p>直觉：参考轨迹 ẍ<sub>d</sub> 是 EE 应具有的加速度；J̇<sub>p</sub> q̇ 是「仅因 q、q̇ 变化导致 J<sub>p</sub> 变化」带来的 EE 加速度项，需从前馈 q̈ 目标中扣除，否则 computed torque 会多补偿。</p>
+
+  <pre><code>// L192–195
+compute_position_jacobian_time_variation_in_base_frame(..., dJ_p);
+const Eigen::Vector3d a_des = x_d_ddot_active - dJ_p * v;</code></pre>
+
+  <h3><span class="step-num">5.2</span> 与关节阻抗 computed torque 的平行</h3>
+  <p>关节阻抗（第 11 课）令 q̈<sub>d</sub> 来自参考关节轨迹插值，直接 <code>rnea(q,v,q̈_d)</code>。</p>
+  <p>任务阻抗：q̈<sub>d</sub> 不直接给定，而是由<strong>任务加速度 a<sub>des</sub></strong> 与零空间目标经 QP 反解，再 <code>rnea(q,v,q̈_d)</code>。</p>
+
+  <!-- ========== 6 ========== -->
+  <h2 id="s6">6. 零空间姿态偏好 q̈<sub>null</sub></h2>
+
+  <p>激活时记录 <strong>Posture capture</strong> q<sub>capture</sub>（四关节角，<code>on_activate</code> L441–445）。希望冗余 DOF 上关节角不要远离该构型，用逐关节 PD 形式的<strong>期望关节加速度</strong>（仅 Arm 索引非零）：</p>
+
+  <div class="eq">
+    q̈<sub>null,i</sub> = K<sub>null,i</sub> · (q<sub>capture,i</sub> − q<sub>i</sub>) &nbsp;&nbsp;（i = 1…4）
+  </div>
+
+  <p>注意：这是<strong>加速度级</strong>目标，不是力矩级弹簧；K<sub>null</sub> 默认 [0.5, 0.5, 0.5, 0.5] N·m/rad 量级，应小于等效笛卡尔刚度，避免与主任务打架。</p>
+
+  <pre><code>// compute_null_space_desired_acceleration — L72–86
+qdd_null[arm_velocity_indices[i]] = null_space_stiffness[i] * (q_capture[i] - q[arm_configuration_indices[i]]);</code></pre>
+
+  <!-- ========== 7 ========== -->
+  <h2 id="s7">7. QP 求 q̈<sub>d</sub>：从代价函数到 H、g</h2>
+
+  <h3><span class="step-num">7.1</span> 优化问题（PRD / ADR-0003）</h3>
+  <div class="eq">
+    min<sub>q̈</sub> &nbsp; ‖W<sub>task</sub> (J<sub>p</sub> q̈ − a<sub>des</sub>)‖² + ‖W<sub>null</sub> (q̈ − q̈<sub>null</sub>)‖²<br>
+    s.t. &nbsp; q̈<sub>min</sub> ≤ q̈ ≤ q̈<sub>max</sub> &nbsp;（仅 Arm 四关节，逐元素盒约束）
+  </div>
+
+  <p>W<sub>task</sub> = w<sub>task</sub> I<sub>3</sub>，W<sub>null</sub> = w<sub>null</sub> I<sub>n<sub>v</sub></sub>（标量权重，yaml <code>qp_task_weight</code>、<code>qp_null_weight</code>）。</p>
+
+  <h3><span class="step-num">7.2</span> 展开为 standard QP</h3>
+  <p>记 e<sub>task</sub> = J<sub>p</sub> q̈ − a<sub>des</sub>，e<sub>null</sub> = q̈ − q̈<sub>null</sub>。代价</p>
+  <div class="eq">
+    J(q̈) = e<sub>task</sub><sup>T</sup> W<sub>task</sub> e<sub>task</sub> + e<sub>null</sub><sup>T</sup> W<sub>null</sub> e<sub>null</sub>
+  </div>
+  <p>展开第一项：</p>
+  <div class="eq">
+    e<sub>task</sub><sup>T</sup> W e<sub>task</sub> = q̈<sup>T</sup> J<sup>T</sup> W J q̈ − 2 a<sub>des</sub><sup>T</sup> W J q̈ + const
+  </div>
+  <p>展开第二项：</p>
+  <div class="eq">
+    e<sub>null</sub><sup>T</sup> W<sub>n</sub> e<sub>null</sub> = q̈<sup>T</sup> W<sub>n</sub> q̈ − 2 q̈<sub>null</sub><sup>T</sup> W<sub>n</sub> q̈ + const
+  </div>
+  <p>ProxQP 标准形为 min ½ q̈<sup>T</sup> H q̈ + g<sup>T</sup> q̈，令梯度为零得：</p>
+  <div class="eq">
+    H = 2 (J<sub>p</sub><sup>T</sup> W<sub>task</sub> J<sub>p</sub> + W<sub>null</sub>)<br>
+    g = −2 (J<sub>p</sub><sup>T</sup> W<sub>task</sub> a<sub>des</sub> + W<sub>null</sub> q̈<sub>null</sub>)
+  </div>
+
+  <p>与 <code class="file">task_impedance_qp_solver.cpp</code> L68–71 完全一致：</p>
+  <pre><code>impl_->H.noalias() = 2.0 * (input.J_p.transpose() * W_task * input.J_p + W_null);
+impl_->g.noalias() = -2.0 * (input.J_p.transpose() * W_task * input.a_des + W_null * input.qdd_null);</code></pre>
+
+  <h3><span class="step-num">7.3</span> 盒约束</h3>
+  <p>对 Arm 关节 i，±<code>joint_acceleration_limits[i]</code>；其余 n<sub>v</sub> 维度（如 mimic gripper）上下界为 0。</p>
+  <pre><code>// fill_joint_acceleration_bounds — L98–101
+qdd_min[idx] = -joint_acceleration_limits[i];
+qdd_max[idx] =  joint_acceleration_limits[i];</code></pre>
+
+  <h3><span class="step-num">7.4</span> 求解器</h3>
+  <p><strong>ProxQP</strong>（<code>proxsuite</code>）dense QP，100 Hz warm-start（<code>WARM_START_WITH_PREVIOUS_RESULT</code>）。失败时 <code>qp_success=false</code>，控制器输出零力矩（<code>pinocchio_task_impedance_controller.cpp</code> L219–226）。</p>
+
+  <h3><span class="step-num">7.5</span> 冗余度与零空间</h3>
+  <p>4 关节、3 维任务：J<sub>p</sub> 行满秩时零空间维数为 1。QP 在「尽量满足 J<sub>p</sub> q̈ ≈ a<sub>des</sub>」的同时，用第二项把 q̈ 拉向 q̈<sub>null</sub>；权重 w<sub>null</sub> ≪ w<sub>task</sub> 时主任务优先。</p>
+
+  <!-- ========== 8 ========== -->
+  <h2 id="s8">8. Computed torque：rnea + 反馈 + 摩擦</h2>
+
+  <h3><span class="step-num">8.1</span> 完整力矩合成</h3>
+  <div class="eq">
+    τ = M(q) q̈<sub>d</sub> + C(q,q̇)q̇ + g(q) + J<sub>p</sub><sup>T</sup> F + τ<sub>f</sub>
+  </div>
+  <p>其中 q̈<sub>d</sub> 为 QP 解，M q̈<sub>d</sub>+C q̇+g 由 Pinocchio 一次 rnea 完成：</p>
+  <pre><code>// L214–222
+pinocchio::rnea(model, data, q, v, result.desired_joint_acceleration);
+const Eigen::VectorXd tau_full = data.tau + J_p.transpose() * result.cartesian_force;</code></pre>
+
+  <h3><span class="step-num">8.2</span> 摩擦与硬件映射</h3>
+  <p>与关节阻抗相同（<code>om_impedance_utilities</code>）：</p>
+  <div class="eq">
+    τ<sub>f,i</sub> = Fv<sub>i</sub> q̇<sub>i</sub> + Fc<sub>i</sub> sign<sub>ε</sub>(q̇<sub>i</sub>) &nbsp;（可选）<br>
+    τ<sub>cmd,i</sub> = s<sub>i</sub> · α<sub>i</sub> · (τ<sub>full,i</sub> + τ<sub>f,i</sub>)
+  </div>
+  <pre><code>// L224–235
+compute_friction_torque(...);
+apply_effort_sign_and_scaling(tau_phys, effort_sign_flips[i], torque_scaling_factors[i]);</code></pre>
+
+  <h3><span class="step-num">8.3</span> v1 简化版（tracer，生产路径已不用）</h3>
+  <p><code>compute_task_impedance_torques_v1</code>：q̈<sub>d</sub> = 0，无 QP、无零空间、无 J̇<sub>p</sub>：</p>
+  <div class="eq">
+    τ = rnea(q, v, 0) + J<sub>p</sub><sup>T</sup> F = C(q,q̇)q̇ + g(q) + J<sub>p</sub><sup>T</sup> F
+  </div>
+  <p>仅 G+C 前馈 + 笛卡尔弹簧；完整版在 <code>compute_task_impedance_torques</code>，由 <code>update()</code> 调用。</p>
+
+  <!-- ========== 9 ========== -->
+  <h2 id="s9">9. 参考位置 x<sub>d</sub> 管理与插值</h2>
+
+  <table class="flow">
+    <tr><th>概念</th><th>变量</th><th>说明</th></tr>
+    <tr><td>Impedance reference position 目标</td><td><code>x_d_target_</code></td><td>Phase 1 仅 activate / yaml 设置</td></tr>
+    <tr><td>实际用于控制的参考</td><td><code>x_d_active_</code></td><td>每周期插值结果</td></tr>
+    <tr><td>Posture capture</td><td><code>q_capture_</code></td><td>activate 时四关节角，供零空间</td></tr>
+  </table>
+
+  <h3><span class="step-num">9.1</span> 两种 reference_position_mode</h3>
+  <table class="flow">
+    <tr><th>模式</th><th>行为</th><th>代码</th></tr>
+    <tr>
+      <td><code>capture_on_activate</code></td>
+      <td>激活时 FK 当前 EE 位置 → x<sub>d,target</sub></td>
+      <td><code>initialize_reference_target_from_mode()</code> L138–140</td>
+    </tr>
+    <tr>
+      <td><code>fixed</code></td>
+      <td>yaml <code>fixed_reference_position</code> [x,y,z]（link1 系，米）</td>
+      <td>L130–137</td>
+    </tr>
+  </table>
+
+  <h3><span class="step-num">9.2</span> Reference position interpolator</h3>
+  <p>逐轴限速（默认 0.1 m/s），避免 x<sub>d</sub> 阶跃：</p>
+  <div class="eq">
+    |x<sub>d,active,i</sub> − x<sub>d,target,i</sub>| 每步最多 v<sub>max,i</sub> · Δt
+  </div>
+  <pre><code>// pinocchio_task_impedance_controller.cpp L162–168
+step_reference_interpolation(x_d_active_vec, x_d_dot_active_vec, x_d_target_vec, max_velocity, dt);
+step_reference_acceleration(x_d_ddot_active_vec, x_d_dot_active_vec, x_d_dot_prev_vec, dt);</code></pre>
+  <p>ẋ<sub>d,active</sub>、ẍ<sub>d,active</sub> 由差分得到，进入 a<sub>des</sub> 与 D<sub>p</sub> 项。</p>
+
+  <!-- ========== 10 ========== -->
+  <h2 id="s10">10. ROS 插件层：update() 一帧数据流</h2>
+
+  <figure>
+    <svg viewBox="0 0 620 200" width="620" height="200" aria-label="任务空间阻抗单帧数据流">
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#333"/></marker></defs>
+      <text x="310" y="14" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#555">pinocchio_task_impedance_controller.cpp · update() @ 100 Hz</text>
+      <!-- row 1 -->
+      <rect x="4" y="24" width="70" height="32" fill="#eee" stroke="#333"/>
+      <text x="39" y="44" text-anchor="middle" font-size="7" font-family="sans-serif">插值 x_d</text>
+      <line x1="74" y1="40" x2="88" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="90" y="24" width="70" height="32" fill="#eee" stroke="#333"/>
+      <text x="125" y="38" text-anchor="middle" font-size="7" font-family="sans-serif">读 q,v</text>
+      <text x="125" y="48" text-anchor="middle" font-size="6" font-family="sans-serif">+gripper</text>
+      <line x1="160" y1="40" x2="174" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="176" y="24" width="72" height="32" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="212" y="38" text-anchor="middle" font-size="7" font-family="sans-serif">FK → x</text>
+      <text x="212" y="48" text-anchor="middle" font-size="7" font-family="sans-serif">J_p, J̇_p</text>
+      <line x1="248" y1="40" x2="262" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="264" y="24" width="72" height="32" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="300" y="44" text-anchor="middle" font-size="7" font-family="sans-serif">F = K_pΔx+D_pΔẋ</text>
+      <line x1="336" y1="40" x2="350" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="352" y="24" width="80" height="32" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="392" y="38" text-anchor="middle" font-size="7" font-family="sans-serif">a_des, q̈_null</text>
+      <text x="392" y="48" text-anchor="middle" font-size="7" font-family="sans-serif">→ ProxQP</text>
+      <line x1="432" y1="40" x2="446" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="448" y="24" width="72" height="32" fill="#dcfce7" stroke="#15803d"/>
+      <text x="484" y="44" text-anchor="middle" font-size="7" font-family="sans-serif">rnea(q,v,q̈_d)</text>
+      <line x1="520" y1="40" x2="534" y2="40" stroke="#333" marker-end="url(#arr)"/>
+      <rect x="536" y="24" width="80" height="32" fill="#fce7f3" stroke="#be185d"/>
+      <text x="576" y="38" text-anchor="middle" font-size="7" font-family="sans-serif">+J_pᵀF</text>
+      <text x="576" y="48" text-anchor="middle" font-size="7" font-family="sans-serif">+摩擦+scale</text>
+      <!-- row 2 detail -->
+      <rect x="90" y="80" width="520" height="100" fill="#fafafa" stroke="#ccc" rx="4"/>
+      <text x="100" y="98" font-size="8" font-family="sans-serif" fill="#333">compute_task_impedance_torques() — task_impedance_control_law.cpp</text>
+      <text x="100" y="118" font-size="7" font-family="monospace" fill="#444">1. compute_ee_position_in_base_frame</text>
+      <text x="100" y="132" font-size="7" font-family="monospace" fill="#444">2. compute_position_jacobian_in_base_frame  →  ẋ = J_p v</text>
+      <text x="100" y="146" font-size="7" font-family="monospace" fill="#444">3. compute_cartesian_spring_force  →  F</text>
+      <text x="100" y="160" font-size="7" font-family="monospace" fill="#444">4. dJ_p, a_des, qdd_null, QP  →  qdd_d</text>
+      <text x="320" y="118" font-size="7" font-family="monospace" fill="#444">5. rnea(q,v,qdd_d)</text>
+      <text x="320" y="132" font-size="7" font-family="monospace" fill="#444">6. tau = data.tau + J_pᵀ F</text>
+      <text x="320" y="146" font-size="7" font-family="monospace" fill="#444">7. + friction, sign×scale → arm_torques</text>
+    </svg>
+    <figcaption>薄插件：数学在 <code>task_impedance_control_law</code> + <code>task_impedance_qp_solver</code></figcaption>
+  </figure>
+
+  <h3>模块边界（便于读源码）</h3>
+  <table class="flow">
+    <tr><th>文件</th><th>职责</th></tr>
+    <tr><td><code>pinocchio_task_impedance_controller.cpp</code></td><td>ros2_control 生命周期、读 HW 接口、插值 x<sub>d</sub>、调 law、写 effort</td></tr>
+    <tr><td><code>task_impedance_control_law.cpp</code></td><td>FK / J / F / a<sub>des</sub> / q̈<sub>null</sub> / rnea / τ 合成</td></tr>
+    <tr><td><code>task_impedance_qp_solver.cpp</code></td><td>ProxQP：H、g、盒约束 → q̈<sub>d</sub></td></tr>
+    <tr><td><code>om_impedance_utilities</code></td><td>插值、摩擦、sign/scale（与关节阻抗共享）</td></tr>
+  </table>
+
+  <!-- ========== 11 ========== -->
+  <h2 id="s11">11. 完整数学 ↔ 代码对照表</h2>
+
+  <table class="flow">
+    <tr><th>数学量</th><th>含义</th><th>代码位置</th></tr>
+    <tr><td>x(q)</td><td>EE 在 link1 系位置</td><td><code>compute_ee_position_in_base_frame</code></td></tr>
+    <tr><td>ẋ = J<sub>p</sub> q̇</td><td>EE 线速度</td><td><code>J_p * v</code> L186</td></tr>
+    <tr><td>F</td><td>笛卡尔弹簧–阻尼力</td><td><code>compute_cartesian_spring_force</code></td></tr>
+    <tr><td>a<sub>des</sub></td><td>任务期望加速度</td><td><code>x_d_ddot_active - dJ_p * v</code> L195</td></tr>
+    <tr><td>q̈<sub>null</sub></td><td>零空间期望加速度</td><td><code>compute_null_space_desired_acceleration</code></td></tr>
+    <tr><td>q̈<sub>d</sub></td><td>QP 解</td><td><code>TaskImpedanceQpSolver::solve</code> → <code>qdd_d</code></td></tr>
+    <tr><td>M q̈<sub>d</sub>+C q̇+g</td><td>动力学前馈</td><td><code>pinocchio::rnea</code> → <code>data.tau</code></td></tr>
+    <tr><td>J<sub>p</sub><sup>T</sup>F</td><td>笛卡尔反馈力矩</td><td><code>J_p.transpose() * cartesian_force</code></td></tr>
+    <tr><td>q<sub>capture</sub></td><td>零空间姿态</td><td><code>q_capture_</code>，<code>on_activate</code></td></tr>
+    <tr><td>x<sub>d,active</sub></td><td>插值参考位置</td><td><code>x_d_active_</code>，<code>step_reference_interpolation</code></td></tr>
+    <tr><td>K<sub>p</sub>, D<sub>p</sub></td><td>笛卡尔增益</td><td><code>params_.stiffness</code>, <code>damping</code>（长度 3）</td></tr>
+    <tr><td>K<sub>null</sub></td><td>零空间刚度</td><td><code>params_.null_space_stiffness</code>（长度 4）</td></tr>
+    <tr><td>τ<sub>cmd</sub></td><td>关节 effort</td><td><code>joint_command_interface_</code></td></tr>
+  </table>
+
+  <!-- ========== 12 ========== -->
+  <h2 id="s12">12. 与关节阻抗、v1 对比</h2>
+
+  <table class="flow">
+    <tr><th></th><th>关节阻抗（第 11 课）</th><th>任务阻抗（本课）</th></tr>
+    <tr><td>控制变量</td><td>q<sub>d</sub> ∈ ℝ⁴</td><td>x<sub>d</sub> ∈ ℝ³（link1 系）</td></tr>
+    <tr><td>反馈</td><td>K<sub>j</sub>Δq + D<sub>j</sub>Δq̇（关节力矩）</td><td>J<sub>p</sub><sup>T</sup>(K<sub>p</sub>Δx + D<sub>p</sub>Δẋ)</td></tr>
+    <tr><td>q̈<sub>d</sub> 来源</td><td>关节参考插值差分</td><td>QP(J<sub>p</sub>, a<sub>des</sub>, q̈<sub>null</sub>)</td></tr>
+    <tr><td>冗余</td><td>无（4 关节 4 目标）</td><td>1 维零空间 → q<sub>capture</sub></td></tr>
+    <tr><td>前馈</td><td>rnea(q,v,q̈_d)</td><td>rnea(q,v,q̈_d)（同哲学）</td></tr>
+    <tr><td>包</td><td><code>om_pinocchio_impedance_controller</code></td><td><code>om_pinocchio_task_impedance_controller</code></td></tr>
+  </table>
+
+  <h2>13. Hold 特例（ẋ<sub>d</sub>=0, ẍ<sub>d</sub>=0）</h2>
+  <p>capture 后静止 hold 时，a<sub>des</sub> = −J̇<sub>p</sub> q̇（补偿构型变化引起的 EE 加速度）；若 q̇≈0 则 a<sub>des</sub>≈0，QP 主要满足 q̈≈q̈<sub>null</sub> 与 J<sub>p</sub> q̈≈0 的折中。笛卡尔反馈 F ≈ K<sub>p</sub>(x<sub>d</sub>−x) 提供主恢复力。</p>
+
+  <h2>14. 自测（检索练习）</h2>
+  <ol>
+    <li>写出从 F 到 τ<sub>task</sub> 的虚功推导关键一步。</li>
+    <li>为什么 a<sub>des</sub> 里要减 J̇<sub>p</sub> q̇ 而不是直接用 ẍ<sub>d</sub>？</li>
+    <li>QP 代价函数展开后 H 的表达式是什么？对应哪两行 C++？</li>
+    <li>4 DOF 臂为何需要 q<sub>capture</sub>？</li>
+  </ol>
+
+  <details>
+    <summary>参考答案</summary>
+    <ol>
+      <li>δW = F<sup>T</sup>δx = F<sup>T</sup>J<sub>p</sub>δq = τ<sup>T</sup>δq ⇒ τ = J<sub>p</sub><sup>T</sup>F。</li>
+      <li>因为 ẍ = J̇<sub>p</sub> q̇ + J<sub>p</sub> q̈；要令 EE 加速度为 ẍ<sub>d</sub>，需 J<sub>p</sub> q̈ = ẍ<sub>d</sub> − J̇<sub>p</sub> q̇。</li>
+      <li>H = 2(J<sub>p</sub><sup>T</sup>W<sub>task</sub>J<sub>p</sub> + W<sub>null</sub>)；<code>task_impedance_qp_solver.cpp</code> L68–69。</li>
+      <li>m=3, n=4 冗余 1；不约束零空间时拖动只定 x 会导致肘部构型漂移。</li>
+    </ol>
+  </details>
+
+  <aside>
+    <strong>有疑问？</strong>在 Cursor 里继续问 Agent，例如：「J_p 为何用 LOCAL_WORLD_ALIGNED？」「w_null 调大有什么现象？」「Gazebo 里怎么验证 F 方向？」——Agent 是你的教师，可结合 <code>test_task_impedance_control_law.cpp</code> 与 launch 一起讲。
+  </aside>
+
+  <p class="meta">
+    主教材：<a href="https://hades.mech.northwestern.edu/images/0/0c/MR-tablet-v2.pdf">Modern Robotics</a> Ch.5（静力 JᵀF）、Ch.8（动力学）；
+    Pinocchio：<a href="https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/namespacepinocchio.html">rnea / Jacobian 文档</a>。
+  </p>
+
+</body>
+</html>

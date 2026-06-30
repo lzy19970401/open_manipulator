@@ -1,0 +1,86 @@
+# Task-space impedance control mode — mutually exclusive with Standard control,
+# GC modes, and Joint-space impedance control mode (open_manipulator_x_impedance_pinocchio).
+# Phase 1: x_d_target via activate / yaml only (no external Cartesian topic).
+
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 100  # Hz — OMX USB 1 Mbps read ~5 ms
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+
+      pinocchio_task_impedance_controller:
+        type: pinocchio_task_impedance_controller/PinocchioTaskImpedanceController
+
+/**:
+  pinocchio_task_impedance_controller:
+    ros__parameters:
+      joints:
+        - joint1
+        - joint2
+        - joint3
+        - joint4
+      passive_state_joints:
+        - gripper_left_joint
+      command_interfaces:
+        - effort
+      state_interfaces:
+        - position
+        - velocity
+      base_frame: link1
+      end_effector_frame: end_effector_link
+      reference_position_mode: capture_on_activate
+      # reference_position_mode: fixed
+      fixed_reference_position:
+        - 0.15
+        - 0.0
+        - 0.12
+      stiffness:
+        - 200.0
+        - 200.0
+        - 200.0
+      damping:
+        - 20.0
+        - 20.0
+        - 20.0
+      reference_transition_max_velocity:
+        - 0.1
+        - 0.1
+        - 0.1
+      null_space_stiffness:
+        - 0.5
+        - 0.5
+        - 0.5
+        - 0.5
+      joint_acceleration_limits:
+        - 10.0
+        - 10.0
+        - 10.0
+        - 10.0
+      qp_task_weight: 1.0
+      qp_null_weight: 1.0
+      effort_sign_flips:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+      torque_scaling_factors:
+        - 1.0
+        - 0.8
+        - 1.0
+        - 0.8
+      # Friction overlay disabled by default (same convention as joint-space hardware yaml).
+      # Enable via launch: enable_friction_compensation:=true
+      enable_friction_compensation: false
+      viscous_friction_coefficients:
+        - 0.49
+        - 1.15
+        - 0.85
+        - 0.19
+      coulomb_friction_coefficients:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+      friction_velocity_deadzone: 0.001

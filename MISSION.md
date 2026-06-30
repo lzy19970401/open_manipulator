@@ -12,6 +12,7 @@
 - **说清 ROBOTIS KDL 版与 Pinocchio 版的控制环差异（effort 接口、URDF 链、仿真前置条件）** ✓（见第 5 课、第 10 课）
 - 能在独立示例程序里验证 g(q) 数量级，并知道如何接到 ros2_control（概念层） ✓（第 10 课走读已落地插件）
 - **写出关节阻抗控制律 τ = rnea(q,v,q̈_d) + K_jΔq + D_jΔq̇，并对照 `om_pinocchio_impedance_controller` 源码** ✓（见第 11 课）
+- **写出任务空间阻抗 τ = rnea(q,v,q̈_d) + J_pᵀF + 零空间 QP，并对照 `om_pinocchio_task_impedance_controller` 源码** ✓（见第 12 课）
 
 ## Constraints
 

@@ -88,6 +88,38 @@ _Avoid_: GC mode（未限定型号时）、leader mode（OMX 无 follower 同步
 与 **Gravity compensation control mode** 并行、互斥的另一套 GC 栈：动力学后端为 Pinocchio，配置目录为 `open_manipulator_x_compensation_pinocchio`；前馈 τ≈G(q) 并可选用辨识得到的 Fv/Fc 摩擦补偿；独立 launch 与控制器插件，不修改既有 KDL GC 路径。
 _Avoid_: Phase 2 backend swap（指在原 KDL 控制器内替换后端时）、pinocchio GC（未与 KDL GC 区分时）
 
+**Task-space impedance control mode（任务空间阻抗控制模式）**:
+通过独立 launch 启动的互斥配置：Arm 四关节走 **effort** 接口，在 **Task-space** 对 **End effector** 的 3D 位置施加虚拟弹簧-阻尼（K_p、D_p），使末端在笛卡尔空间呈现可配置的柔顺感；**不控制**末端姿态。动力学后端为 Pinocchio；不含 **Gripper** 阻抗。与 **Standard control launch**、各 GC 模式及 **Joint-space impedance control mode** 二选一，不可同时加载。控制器包、配置目录与 launch 与 **Joint-space impedance control mode** **完全平行**（`om_pinocchio_task_impedance_controller`、`open_manipulator_x_task_impedance_pinocchio`）。
+_Avoid_: Cartesian impedance（未限定仅 3D 位置时）、operational space control（实现层术语）
+
+**Reference position capture（参考位置捕获）**:
+**Task-space impedance control mode** 下控制器激活时将当前 **End effector** FK 位置锁定为 x_d 的默认行为；yaml 可通过 **Fixed reference position** 覆盖，跳过捕获。
+_Avoid_: home on start（指 bringup **Ready pose** 序列时）
+
+**Fixed reference position（固定参考位置）**:
+yaml 中显式指定的三维 x_d（**link1** 系，单位 m），用于可重复实验；与 **Reference position capture** 互斥选用。
+_Avoid_: named pose（指 SRDF 构型名而非坐标数组时）
+
+**Reference position transition（参考位置过渡）**:
+运行时 x_d 变更时，目标 x_d 须经平滑轨迹插值到达，禁止瞬时跳变。Phase 1 实现内部 **Reference position interpolator**（`x_d_active` 向 `x_d_target` 一阶限速逼近），但不接外部 topic；Phase 2 仅需写入 `x_d_target`。
+_Avoid_: step setpoint（瞬时改 x_d 时）
+
+**Reference position interpolator（参考位置插值器）**:
+每控制周期将 `x_d_active` 向 `x_d_target` 独立限速移动；默认 `reference_transition_max_velocity` 为 `[0.1, 0.1, 0.1]` m/s。Phase 1 仅在 activate/yaml 加载时设 `x_d_target`，二者通常相等。
+_Avoid_: trajectory planner（指 MoveIt 轨迹规划时）
+
+**Impedance reference position（阻抗参考位置）**:
+**Task-space impedance control mode** 下虚拟弹簧-阻尼的平衡点 x_d（**End effector** 在 **`link1` 基座坐标系**中的三维位置）；Arm 被外力偏离 x_d 时产生恢复力，外力撤除后回到 x_d 附近。
+_Avoid_: target pose（含姿态时）、setpoint（实现层术语）、world 坐标（未做 frame 转换时）
+
+**Virtual task stiffness（虚拟任务刚度 K_p）**:
+**Task-space impedance control mode** 下末端位置弹簧增益（N/m）；三轴可独立配置。
+_Avoid_: Kp（未区分关节/任务空间时）、Cartesian gain
+
+**Virtual task damping（虚拟任务阻尼 D_p）**:
+**Task-space impedance control mode** 下末端位置阻尼增益（N·s/m）；三轴可独立配置。
+_Avoid_: Kd（未区分关节/任务空间时）
+
 **Joint-space impedance control mode（关节空间阻抗控制模式）**:
 通过独立 launch 启动的互斥配置：Arm 四关节走 **effort** 接口，在 **Joint-space** 对参考构型 q_d 施加虚拟弹簧-阻尼（K_j、D_j），使末端附近呈现可配置的柔顺感；动力学后端为 Pinocchio；不含 **Gripper** 阻抗。与 **Standard control launch**、**Gravity compensation control mode** 及 **Pinocchio gravity compensation control mode** 二选一，不可同时加载。控制器包、配置目录与 launch 与 Pinocchio GC 栈 **完全平行**（`om_pinocchio_impedance_controller`、`open_manipulator_x_impedance_pinocchio`）。
 _Avoid_: compliance mode（未区分关节/任务空间时）、spring mode（与 **SpringActuatorController** 混淆时）
@@ -128,9 +160,29 @@ _Avoid_: Kd（未区分关节/任务空间时）、velocity gain（实现层 PID
 Phase 1 离线测试：固定 (q, q̇, q_d) 验证 computed torque 前馈、K_j/D_j 阻抗项及可选摩擦叠加的数值正确性；与 Pinocchio 直接调用对比。Gazebo 仅作手动 smoke，不纳入 CI 自动化。
 _Avoid_: hardware regression（指实机 hold 评测时）
 
+**Task-space impedance unit verification（任务空间阻抗单元校验）**:
+Phase 1 离线测试：固定 (q, q̇, x_d) 验证 FK/Jacobian、QP 求得的 q̈_d、J_p^T F、rnea 前馈及可选摩擦叠加；与 Pinocchio 手算对比。Gazebo 仅作手动 smoke，不纳入 CI 自动化。
+_Avoid_: hardware regression（指实机 hold 评测时）
+
 **Impedance dynamics feedforward（阻抗动力学前馈）**:
 **Joint-space impedance control mode** 下除 K_j、D_j 虚拟阻抗项外、由 Pinocchio 计算的关节力矩前馈；Phase 1 采用完整 **Computed torque**（M(q)q̈_d + G(q) + C(q,q̇)q̇），q_d 恒定时 q̈_d = 0 但保留 M(q)q̈_d 项以便后续时变参考轨迹。
 _Avoid_: gravity overlay（指仅 G(q) 的 GC 前馈时）、PD only（无前馈时）
+
+**Task-space impedance dynamics feedforward（任务空间阻抗动力学前馈）**:
+**Task-space impedance control mode** 下由 `x_d` 插值得到 ẍ_d，将 **q̈_d 求解** 表述为带关节加速度不等式约束的 QP（主任务：跟踪 ẍ_d；次任务：零空间姿态偏好），再 **τ_ff = rnea(q, v, q̈_d)**；叠加 **J_p^T F**（F = K_p Δx + D_p Δẋ）。
+_Avoid_: G-only feedforward（指简化 OSC 时）、PD only（无前馈时）、闭式 DLS-only（指 Phase 1 不引入 QP 时）
+
+**Null-space posture preference（零空间姿态偏好）**:
+**Task-space impedance control mode** 下利用 4 DOF 控 3D 位置的 1 维冗余，在 **Reference position capture** 时记录 **Posture capture（姿态捕获）** q_capture，经零空间投影把关节构型拉回 q_capture，防止肘部漂移。
+_Avoid_: elbow control（未说明是零空间二级任务时）
+
+**Posture capture（姿态捕获）**:
+**Task-space impedance control mode** 激活时锁定的四关节参考构型 q_capture，供 **Null-space posture preference** 作二级目标；与 **Impedance reference position** x_d 同时捕获。
+_Avoid_: q_d（指 **Joint-space impedance control mode** 的关节参考时）
+
+**Virtual null-space stiffness（虚拟零空间刚度 K_null）**:
+**Null-space posture preference** 的关节空间弹簧增益（N·m/rad），应低于笛卡尔 K_p 映射到关节的等效刚度，避免与主任务抢控制权。
+_Avoid_: K_j（指 **Joint-space impedance control mode** 主任务刚度时）
 
 **Impedance friction overlay（阻抗摩擦叠加）**:
 **Joint-space impedance control mode** 下可选的 Fv/Fc 前馈叠加，参数语义与 **Pinocchio gravity compensation control mode** 相同（含 `enable_friction_compensation`、Fv/Fc 数组与 velocity deadzone），不另起一套辨识结果。

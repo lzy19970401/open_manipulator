@@ -1,0 +1,9 @@
+<library path="pinocchio_task_impedance_controller">
+  <class name="pinocchio_task_impedance_controller/PinocchioTaskImpedanceController"
+         type="pinocchio_task_impedance_controller::PinocchioTaskImpedanceController"
+         base_class_type="controller_interface::ControllerInterface">
+  <description>
+    Pinocchio task-space impedance control on Arm joints (3D end effector position in link1 frame)
+  </description>
+  </class>
+</library>

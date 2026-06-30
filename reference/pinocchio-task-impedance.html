@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>速查：Pinocchio 任务空间阻抗控制</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body { max-width: 40rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #eee; padding: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    th, td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    .eq { font-size: 0.88rem; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+
+  <p class="meta"><a href="../lessons/0012-omx-pinocchio-task-impedance.html">← 第 12 课</a> ·
+    <a href="pinocchio-joint-impedance.html">关节阻抗速查</a></p>
+  <h1>Pinocchio 任务空间阻抗速查</h1>
+
+  <h2>核心公式（link1 系，仅 EE 位置）</h2>
+  <pre class="eq">ẋ = J_p(q) q̇
+ẍ = J̇_p q̇ + J_p q̈
+
+F = K_p ⊙ (x_d − x) + D_p ⊙ (ẋ_d − ẋ)
+
+a_des = ẍ_d − J̇_p q̇
+
+q̈_null,i = K_null,i (q_capture,i − q_i)
+
+q̈_d = argmin  ‖W_task(J_p q̈ − a_des)‖² + ‖W_null(q̈ − q̈_null)‖²
+       s.t. q̈_min ≤ q̈ ≤ q̈_max  (Arm only)
+
+τ = rnea(q, v, q̈_d) + J_pᵀ F + τ_f
+τ_cmd = effort_sign_flips ⊙ torque_scaling ⊙ τ</pre>
+
+  <h2>QP 矩阵（ProxQP）</h2>
+  <pre class="eq">H = 2 (J_pᵀ W_task J_p + W_null)
+g = −2 (J_pᵀ W_task a_des + W_null q̈_null)</pre>
+
+  <h2>包与 Launch</h2>
+  <table>
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>包</td><td><code>om_pinocchio_task_impedance_controller</code></td></tr>
+    <tr><td>插件</td><td><code>pinocchio_task_impedance_controller/PinocchioTaskImpedanceController</code></td></tr>
+    <tr><td>控制律</td><td><code>task_impedance_control_law.cpp</code></td></tr>
+    <tr><td>QP</td><td><code>task_impedance_qp_solver.cpp</code></td></tr>
+    <tr><td>配置</td><td><code>open_manipulator_x_task_impedance_pinocchio</code></td></tr>
+    <tr><td>实机</td><td><code>open_manipulator_x_pinocchio_task_impedance.launch.py</code></td></tr>
+    <tr><td>Gazebo</td><td><code>open_manipulator_x_pinocchio_task_impedance_gazebo.launch.py</code></td></tr>
+  </table>
+
+  <h2>默认增益（Phase 1）</h2>
+  <pre>K_p = [200, 200, 200]  N/m
+D_p = [20, 20, 20]     N·s/m
+K_null = [0.5, 0.5, 0.5, 0.5]
+v_max = [0.1, 0.1, 0.1] m/s  (x_d 插值)
+q̈_max = [10, 10, 10, 10] rad/s²</pre>
+
+  <h2>update() 顺序</h2>
+  <pre>1. step_reference_interpolation  → x_d_active, ẋ_d_active
+2. step_reference_acceleration   → ẍ_d_active
+3. fill q, v (+ gripper mimic)
+4. compute_task_impedance_torques:
+     FK → J_p, J̇_p → F → a_des, q̈_null → QP → q̈_d
+     rnea → + J_pᵀF → + friction → sign×scale
+5. write Arm effort</pre>
+
+  <h2>关键函数 ↔ 文件</h2>
+  <table>
+    <tr><th>函数</th><th>文件</th></tr>
+    <tr><td><code>compute_ee_position_in_base_frame</code></td><td>task_impedance_control_law.cpp</td></tr>
+    <tr><td><code>compute_position_jacobian_in_base_frame</code></td><td>同上</td></tr>
+    <tr><td><code>compute_cartesian_spring_force</code></td><td>task_impedance_control_law.hpp</td></tr>
+    <tr><td><code>TaskImpedanceQpSolver::solve</code></td><td>task_impedance_qp_solver.cpp</td></tr>
+    <tr><td><code>compute_task_impedance_torques</code></td><td>task_impedance_control_law.cpp</td></tr>
+    <tr><td><code>initialize_reference_target_from_mode</code></td><td>pinocchio_task_impedance_controller.cpp</td></tr>
+  </table>
+
+  <h2>与关节阻抗</h2>
+  <table>
+    <tr><th>关节阻抗</th><th>任务阻抗</th></tr>
+    <tr><td>K_j Δq + D_j Δq̇</td><td>J_pᵀ (K_p Δx + D_p Δẋ)</td></tr>
+    <tr><td>q̈_d 来自关节插值</td><td>q̈_d 来自 QP</td></tr>
+    <tr><td>无零空间项</td><td>q_capture + K_null</td></tr>
+  </table>
+
+  <p class="meta">ADR：<a href="../docs/adr/0003-omx-pinocchio-task-space-impedance.md">0003</a></p>
+
+</body>
+</html>
