@@ -12,7 +12,7 @@ ENV PYTHONPATH=$PYTHONPATH:/usr/local/lib
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install realsense dependencies
+# Install realsense + sysid / Gazebo / control dependencies
 RUN apt-get update && apt-get install -y \
     libusb-1.0-0-dev \
     libglfw3-dev \
@@ -20,6 +20,17 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-pinocchio \
     ros-${ROS_DISTRO}-proxsuite \
     ros-${ROS_DISTRO}-usb-cam \
+    ros-${ROS_DISTRO}-ros-gz-sim \
+    ros-${ROS_DISTRO}-gz-ros2-control \
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-joint-trajectory-controller \
+    ros-${ROS_DISTRO}-joint-state-broadcaster \
+    ros-${ROS_DISTRO}-xacro \
+    ros-${ROS_DISTRO}-rosbag2 \
+    python3-numpy \
+    python3-yaml \
+    python3-pytest \
     vim \
     nano \
     && rm -rf /var/lib/apt/lists/*
