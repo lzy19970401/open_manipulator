@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 #
-# Hardware excitation launch (position-mode OMX + bringup controller yaml).
-#
-# Mutually exclusive with Standard control launch on the same port.
-# Startup order:
-#   ros2_control → spawner → excitation + bag
-#
-# After the trajectory (including post_hold) completes, excitation_runner keeps
-# spinning with arm_controller holding q0 — torque stays enabled. Press Ctrl+C
-# to exit; rosbag stops automatically when motion finishes.
+# Hardware model-validation trajectory (test profile + rosbag).
 #
 import os
 from datetime import datetime, timezone
@@ -31,13 +23,13 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     sysid_share = get_package_share_directory('open_manipulator_sysid')
-    default_excitation_config = os.path.join(sysid_share, 'config', 'excitation.yaml')
+    default_excitation_config = os.path.join(sysid_share, 'config', 'test_trajectory.yaml')
 
     default_bag_dir = str(
         Path('/workspace')
         / 'sysid_results'
         / 'bags'
-        / f'hardware_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}'
+        / f'test_hardware_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}'
     )
 
     declared_arguments = [
@@ -68,15 +60,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'excitation_periods',
-            default_value='3',
-            description=(
-                'Number of Fourier excitation periods (first period(s) discarded for sysid)'
-            ),
+            default_value='2',
+            description='Fourier periods for validation (discard_periods=1 in test_trajectory.yaml)',
         ),
         DeclareLaunchArgument(
             'excitation_config',
             default_value=default_excitation_config,
-            description='Path to excitation yaml (default: excitation.yaml)',
+            description='Path to test_trajectory.yaml',
         ),
     ]
 

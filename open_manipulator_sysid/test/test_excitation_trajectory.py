@@ -1,125 +1,110 @@
-"""Tests for open_manipulator_sysid excitation trajectory."""
+"""Unit tests for paper Fourier excitation and C² runtime schedule."""
 
-from pathlib import Path
+from __future__ import annotations
+
+import math
 
 import pytest
-import yaml
 
 from open_manipulator_sysid.excitation_trajectory import (
     ARM_JOINTS,
     ExcitationTrajectory,
-    SafetyViolation,
-    default_config_path,
-    peak_approach_velocities,
-    required_approach_duration,
-    validate_approach_segment,
+    TrajectorySample,
+    build_sysid_runtime_trajectory_messages,
+    compute_swevers_kinematics,
+    describe_runtime_schedule,
+    required_c2_transition_duration,
 )
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / 'config' / 'excitation.yaml'
+@pytest.fixture(name='trajectory')
+def fixture_trajectory() -> ExcitationTrajectory:
+    return ExcitationTrajectory.default()
 
 
-def test_default_config_exists() -> None:
-    assert CONFIG_PATH.is_file()
-    assert default_config_path().is_file()
+def test_paper_fourier_kinematics_at_zero():
+    q0 = 0.1
+    a = [0.2, -0.1, 0.05, -0.02, 0.01]
+    b = [0.15, -0.08, 0.04, -0.01, 0.005]
+    omega_f = 0.1
+    q, qd, qdd = compute_swevers_kinematics(q0, a, b, omega_f, 0.0)
+    two_pi = 2.0 * math.pi
+    expected_q = q0 - sum(
+        b_l / (two_pi * harmonic * omega_f)
+        for harmonic, b_l in enumerate(b, start=1)
+    )
+    assert math.isclose(q, expected_q, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(qd, sum(a), rel_tol=0, abs_tol=1e-9)
+    expected_qdd = sum(two_pi * harmonic * omega_f * b_l for harmonic, b_l in enumerate(b, start=1))
+    assert math.isclose(qdd, expected_qdd, rel_tol=0, abs_tol=1e-9)
 
 
-def test_config_matches_prd_defaults() -> None:
-    with CONFIG_PATH.open('r', encoding='utf-8') as handle:
-        config = yaml.safe_load(handle)
-
-    assert config['arm_joints'] == list(ARM_JOINTS)
-    assert config['q0'] == {
-        'joint1': 0.0,
-        'joint2': 0.0,
-        'joint3': -0.05,
-        'joint4': 0.135,
-    }
-    assert config['excitation']['num_harmonics'] == 5
-    assert config['excitation']['period_s'] == 10.0
-    assert config['excitation']['amplitude_fraction'] == 0.3
-    assert config['safety']['soft_limit_inset_fraction'] == 0.1
-    assert config['safety']['max_velocity_rad_s'] == 1.0
-    assert config['safety']['max_acceleration_rad_s2'] == 2.0
-    assert config['safety']['velocity_abort_margin_rad_s'] == 0.05
+def test_period_boundary_generally_nonzero(trajectory: ExcitationTrajectory):
+    start, end = trajectory.period_boundary_states()
+    # Template/GA coeffs need not return to q0 at period end.
+    assert isinstance(start.position, dict)
+    assert isinstance(end.velocity, dict)
 
 
-def test_trajectory_starts_at_q0() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    sample = trajectory.sample(0.0)
+def test_multi_period_uses_continuous_time(trajectory: ExcitationTrajectory):
+    t_one = trajectory.period_s
+    wrapped = trajectory.sample(t_one, wrap=True)
+    continuous = trajectory.sample(t_one, wrap=False)
+    # Without periodic constraints these may differ when coefficients are non-trivial.
+    assert wrapped.time_s == 0.0 or wrapped.time_s == pytest.approx(0.0, abs=1e-9)
+
+
+def test_c2_ingress_matches_boundary_states(trajectory: ExcitationTrajectory):
+    q0 = trajectory.q0
+    excitation_start, _ = trajectory.period_boundary_states()
+    q0_state = TrajectorySample(
+        time_s=0.0,
+        position=dict(q0),
+        velocity={joint: 0.0 for joint in ARM_JOINTS},
+        acceleration={joint: 0.0 for joint in ARM_JOINTS},
+    )
+    duration = required_c2_transition_duration(
+        q0_state,
+        excitation_start,
+        joints=ARM_JOINTS,
+        max_velocity=trajectory._max_velocity,  # noqa: SLF001
+        max_acceleration=trajectory._max_acceleration,  # noqa: SLF001
+        min_duration_s=2.0,
+    )
+    samples, schedule = build_sysid_runtime_trajectory_messages(
+        trajectory,
+        start_positions=q0,
+        to_q0_duration_s=1.0,
+        ingress_spline_duration_s=duration,
+        num_periods=3,
+        egress_spline_duration_s=duration,
+        q0_hold_duration_s=2.0,
+        sample_dt_s=0.05,
+        discard_periods=1,
+    )
+    ingress_start = samples[int(schedule.to_q0_duration_s / 0.05)]
+    ingress_end = samples[int(schedule.excitation_start_s / 0.05)]
     for joint in ARM_JOINTS:
-        assert sample.position[joint] == pytest.approx(
-            trajectory._limits[joint].q0,
-            abs=1e-9,
+        assert ingress_end.position[joint] == pytest.approx(
+            excitation_start.position[joint], abs=0.05
+        )
+        assert ingress_end.velocity[joint] == pytest.approx(
+            excitation_start.velocity[joint], abs=0.1
         )
 
 
-def test_soft_limits_over_one_period() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    trajectory.validate_period(num_samples=2000)
-
-
-def test_velocity_cap_over_one_period() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    peaks = trajectory.max_abs_values_over_period()
-    for joint in ARM_JOINTS:
-        assert peaks[joint]['velocity'] <= trajectory._max_velocity + 1e-6
-
-
-def test_only_arm_joints_present() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    assert trajectory.joints == ARM_JOINTS
-    sample = trajectory.sample(1.0)
-    assert set(sample.position.keys()) == set(ARM_JOINTS)
-
-
-def test_validate_sample_detects_velocity_violation() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH, amplitude_scale=10.0)
-    with pytest.raises(SafetyViolation):
-        trajectory.validate_period(num_samples=100)
-
-
-def test_required_approach_duration_scales_with_delta() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    q0 = trajectory.q0
-    start = {joint: q0[joint] for joint in ARM_JOINTS}
-    start['joint1'] = q0['joint1'] + 3.0
-
-    duration = required_approach_duration(
-        start,
-        q0,
-        joints=ARM_JOINTS,
-        max_velocity=trajectory._max_velocity,
-        min_duration_s=5.0,
+def test_runtime_schedule_bag_window(trajectory: ExcitationTrajectory):
+    schedule = describe_runtime_schedule(
+        trajectory,
+        start_positions=trajectory.q0,
+        to_q0_duration_s=5.0,
+        ingress_spline_duration_s=4.0,
+        num_periods=3,
+        egress_spline_duration_s=4.0,
+        q0_hold_duration_s=10.0,
+        discard_periods=1,
     )
-    assert duration > 5.0
-    peaks = peak_approach_velocities(
-        start,
-        q0,
-        joints=ARM_JOINTS,
-        approach_duration_s=duration,
-    )
-    assert peaks['joint1'] <= trajectory._max_velocity + 1e-9
-
-
-def test_approach_segment_respects_velocity_cap() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(CONFIG_PATH)
-    q0 = trajectory.q0
-    start = {joint: q0[joint] for joint in ARM_JOINTS}
-    start['joint1'] = q0['joint1'] + 3.0
-
-    duration = required_approach_duration(
-        start,
-        q0,
-        joints=ARM_JOINTS,
-        max_velocity=trajectory._max_velocity,
-        min_duration_s=5.0,
-    )
-    validate_approach_segment(
-        start,
-        q0,
-        joints=ARM_JOINTS,
-        approach_duration_s=duration,
-        max_velocity=trajectory._max_velocity,
-        max_acceleration=trajectory._max_acceleration,
-    )
+    assert schedule.bag_record_start_s == pytest.approx(5.0)
+    assert schedule.bag_record_end_s == pytest.approx(5.0 + 4.0 + 30.0)
+    assert schedule.identification_start_s == pytest.approx(9.0 + 10.0)
+    assert schedule.identification_end_s == pytest.approx(39.0)

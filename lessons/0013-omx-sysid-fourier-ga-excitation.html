@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 13 课：多级傅里叶激励与 GA 系数优化</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    .step-num { display: inline-block; background: #7c3aed; color: #fff; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 3px; margin-right: 0.3rem; }
+    code.file { font-size: 0.82rem; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .theory { background: #faf5ff; border-left-color: #7c3aed; }
+    .code-ref { font-family: var(--font-sans); font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+  <p class="meta">第 13 课 · GA 激励轨迹 · 约 20 分钟 ·
+    <a href="0006-omx-sysid-excitation-trajectory.html">← 第 6 课</a> ·
+    <a href="../reference/sysid-ga-excitation.html">GA 速查</a>
+  </p>
+
+  <h1>多级傅里叶激励轨迹 + GA 求解系数</h1>
+
+  <p class="lead">
+    <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a>讲了<strong>固定模板</strong>（1/k 谐波权重）的傅里叶 q(t)。
+    本课补上两层：<strong>多级傅里叶在工程里怎么算 q、q̇、q̈</strong>，以及
+    <strong>遗传算法（GA）如何离线搜索幅值 a 与相位 φ</strong>，使辨识观测矩阵更好条件。
+    代码在 <code class="file">excitation_trajectory.py</code> 与
+    <code class="file">excitation_ga.py</code>；在线 Gazebo/实机默认读
+    <code class="file">config/excitation_ga.yaml</code>。
+  </p>
+
+  <aside class="theory">
+    <strong>主参考：</strong>Swevers J. et al., «Optimal robot excitation for parameter identification of robot dynamics»,
+    <em>Robotica</em>, 1997（<a href="https://doi.org/10.1017/S026357479700038X">DOI</a>）。
+    仓库 <code>RESOURCES.md</code> 亦有收录。
+  </aside>
+
+  <h2>1. 多级傅里叶：一条式子，三个量</h2>
+
+  <p>对 OMX 四轴 Arm 的每个关节 j（joint1–4），Phase 1 用<strong>位置正弦级数</strong>（N 个谐波，基频 ω₀=2π/T）：</p>
+
+  <pre>q_j(t) = q₀_j + Σ_{k=1}^{N} a_{jk} sin(k ω₀ t + φ_{jk})
+q̇_j   = Σ a_{jk} · k ω₀ · cos(k ω₀ t + φ_{jk})
+q̈_j   = −Σ a_{jk} · (k ω₀)² · sin(k ω₀ t + φ_{jk})</pre>
+
+  <p><strong>「多级」</strong>即 k=1…N 多个频率同时存在；N=5、T=10 s 时最低频 0.1 Hz，最高谐波 0.5 Hz。
+  相比单频正弦，Y(q,q̇,q̈) 各列更易<strong>持续激励</strong>，回归更稳定。</p>
+
+  <p class="code-ref">工程入口：<code>compute_joint_kinematics()</code>（纯数学，无 ROS）</p>
+  <pre><code>def compute_joint_kinematics(q0, amplitudes, phases, omega0, time_s):
+    q, qd, qdd = q0, 0.0, 0.0
+    for k, (amp, phase) in enumerate(zip(amplitudes, phases), start=1):
+        omega = k * omega0
+        angle = omega * time_s + phase
+        q   += amp * sin(angle)
+        qd  += amp * omega * cos(angle)
+        qdd += -amp * omega**2 * sin(angle)
+    return q, qd, qdd</code></pre>
+
+  <p><code>ExcitationTrajectory.sample(t)</code> 对四个关节各调一次，返回
+  <code>TrajectorySample(position, velocity, acceleration)</code>。</p>
+
+  <h2>2. 两种系数来源：template vs ga</h2>
+
+  <table class="flow">
+    <tr><th>模式</th><th>yaml 键</th><th>系数从哪来</th><th>用途</th></tr>
+    <tr>
+      <td><code>template</code></td>
+      <td><code>excitation.yaml</code></td>
+      <td><code>_build_harmonics()</code>：a_k ∝ 1/k，φ=0</td>
+      <td>对照、调试、GA 种群种子</td>
+    </tr>
+    <tr>
+      <td><code>ga</code></td>
+      <td><code>excitation_ga.yaml</code></td>
+      <td><code>ga_coefficients</code> 每关节 N 个 a、φ</td>
+      <td>默认在线激励（Gazebo / 实机）</td>
+    </tr>
+  </table>
+
+  <pre><code># excitation.yaml
+excitation:
+  coefficients_source: template   # 或 ga
+
+# excitation_ga.yaml 额外段
+ga_coefficients:
+  joint1:
+    amplitudes: [a1, a2, a3, a4, a5]
+    phases:     [φ1, φ2, φ3, φ4, φ5]
+ga_amplitude_scale: 1.0   # 幅值已写入 ga_coefficients 时为 1</code></pre>
+
+  <p>无论哪种模式，构造后都会走<strong>同一套安全链</strong>：
+  软限位内缩 10%、|q̇|≤1.0 rad/s、|q̈|≤2.0 rad/s²；
+  template 模式还会乘统一 <code>amplitude_scale</code>（<code>_compute_amplitude_scale()</code>）。</p>
+
+  <h2>3. 在线轨迹：不只傅里叶段</h2>
+
+  <p><code>build_excitation_trajectory_messages()</code> 拼完整时间轴：</p>
+
+  <table class="flow">
+    <tr><th>阶段</th><th>时长</th><th>内容</th></tr>
+    <tr><td>approach</td><td>≥5 s（可延长）</td><td>五次多项式从当前 q → q₀</td></tr>
+    <tr><td>hold</td><td>2 s</td><td>静止在 q₀</td></tr>
+    <tr><td>excitation</td><td>1×T 或更多</td><td>多级傅里叶（本课核心）</td></tr>
+    <tr><td>settle</td><td>2 s</td><td>回到 q₀，末端速度为 0</td></tr>
+  </table>
+
+  <p><code>excitation_runner</code> 把采样序列打成 <code>FollowJointTrajectory</code> goal 发给
+  <code>arm_controller</code>；launch 默认 <code>config:=…/excitation_ga.yaml</code>。</p>
+
+  <h2>4. GA 在优化什么？</h2>
+
+  <p>辨识线性式：<code>Y(q,q̇,q̈) · π = τ</code>。若 Y 列近似线性相关，最小二乘病态（条件数 κ 很大）。</p>
+
+  <p>Swevers 思路：<strong>选 q(t) 使堆叠观测矩阵 W 的条件数尽量小</strong>。
+  本仓库 GA 的适应度即 κ(W)（越小越好）；W 在一个周期内密采样堆叠而成。</p>
+
+  <figure>
+    <svg viewBox="0 0 520 110" width="520" height="110" aria-label="GA 离线优化到在线执行">
+      <rect x="10" y="35" width="100" height="40" fill="#ede9fe" stroke="#7c3aed"/>
+      <text x="60" y="52" text-anchor="middle" font-size="9" font-family="sans-serif">excitation.yaml</text>
+      <text x="60" y="66" text-anchor="middle" font-size="8" font-family="sans-serif">template 种子</text>
+      <rect x="130" y="35" width="110" height="40" fill="#fef3c7" stroke="#ca8a04"/>
+      <text x="185" y="52" text-anchor="middle" font-size="9" font-family="sans-serif">excitation_ga_optimize</text>
+      <text x="185" y="66" text-anchor="middle" font-size="8" font-family="sans-serif">min κ(W)</text>
+      <rect x="260" y="35" width="100" height="40" fill="#dcfce7" stroke="#15803d"/>
+      <text x="310" y="52" text-anchor="middle" font-size="9" font-family="sans-serif">excitation_ga.yaml</text>
+      <text x="310" y="66" text-anchor="middle" font-size="8" font-family="sans-serif">ga_coefficients</text>
+      <rect x="380" y="35" width="130" height="40" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="445" y="52" text-anchor="middle" font-size="9" font-family="sans-serif">excitation_runner</text>
+      <text x="445" y="66" text-anchor="middle" font-size="8" font-family="sans-serif">Gazebo / 实机</text>
+      <line x1="110" y1="55" x2="130" y2="55" stroke="#333" marker-end="url(#arr13)"/>
+      <line x1="240" y1="55" x2="260" y2="55" stroke="#333"/>
+      <line x1="360" y1="55" x2="380" y2="55" stroke="#333"/>
+      <text x="260" y="100" text-anchor="middle" font-size="9" fill="#666" font-family="sans-serif">离线（Docker + Pinocchio）→ 在线（position 跟踪 + 录 bag）</text>
+      <defs><marker id="arr13" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#333"/></marker></defs>
+    </svg>
+  </figure>
+
+  <h2>5. 工程：观测矩阵 W 怎么建</h2>
+
+  <p class="code-ref"><code>excitation_ga.build_observation_matrix()</code></p>
+  <ol>
+    <li>对轨迹上 <code>num_samples</code> 个时刻 t，调用 <code>trajectory.sample(t)</code> 得 q、q̇、q̈。</li>
+    <li>填入 Pinocchio 全模型状态，调用
+      <code>pin.computeJointTorqueRegressor(model, data, q, q̇, q̈)</code>。</li>
+    <li>取 Arm 四行（joint1–4），并拼接摩擦块 <code>diag(q̇)</code> 与 <code>diag(sign(q̇))</code>（Fv、Fc 列）。</li>
+    <li>各行垂直堆叠 → 矩阵 W；SVD 得有效秩与 κ。</li>
+  </ol>
+
+  <p>违反软限位或速度/加速度 cap 的个体 → 适应度罚分 <code>1e12</code>，相当于淘汰。</p>
+
+  <h2>6. 工程：GA 个体编码与进化</h2>
+
+  <p><strong>染色体长度</strong>：4 关节 × N 谐波 × 2（幅值基因 + 相位基因）= <strong>40</strong>（N=5）。</p>
+
+  <table class="flow">
+    <tr><th>基因</th><th>取值</th><th>解码</th></tr>
+    <tr><td>幅值基因 g_a</td><td>[0, 1]</td><td>a = g_a × template 最大幅值（1/k 分配）</td></tr>
+    <tr><td>相位基因 g_φ</td><td>[0, 1]</td><td>φ = g_φ × 2π</td></tr>
+  </table>
+
+  <p><strong>种群</strong>：第 1 个个体 = template（全 1、相位 0）；其余在 template 附近随机扰动。</p>
+  <p><strong>每代</strong>：评估适应度 → 保留 elite（默认 4）→ 锦标赛选择 → 单点交叉 → 高斯变异 → 下一代。</p>
+  <p>默认 <code>GAParameters</code>：population=80，generations=120，samples_per_period=60。</p>
+
+  <p class="code-ref">CLI（Docker 内）：</p>
+  <pre><code>ros2 run open_manipulator_sysid excitation_ga_optimize
+ros2 run open_manipulator_sysid excitation_ga_optimize --quick   # 冒烟
+ros2 run open_manipulator_sysid excitation_ga_optimize --generations 200</code></pre>
+
+  <p>输出 <code>config/excitation_ga.yaml</code>，含 <code>ga_metadata.condition_number</code> 供验收对比。</p>
+
+  <h2>7. 亲手跑一遍（Docker）</h2>
+
+  <pre><code>./docker/container.sh enter
+cd ~/ros2_ws
+colcon build --packages-select open_manipulator_sysid --symlink-install
+source install/setup.bash
+
+# 离线 GA（需 Pinocchio）
+ros2 run open_manipulator_sysid excitation_ga_optimize --quick
+
+# 看一个周期采样 + 安全校验
+ros2 run open_manipulator_sysid excitation_trajectory_print \
+  --config $(ros2 pkg prefix open_manipulator_sysid)/share/open_manipulator_sysid/config/excitation_ga.yaml
+
+# Gazebo 在线激励
+ros2 launch open_manipulator_sysid excitation_gazebo.launch.py</code></pre>
+
+  <h2>8. 与第 6 课的差异（一张表）</h2>
+
+  <table class="flow">
+    <tr><th>话题</th><th>第 6 课</th><th>本课</th></tr>
+    <tr><td>系数</td><td>固定 1/k + φ=0</td><td>GA 搜索 a、φ</td></tr>
+    <tr><td>优化目标</td><td>无（启发式模板）</td><td>min κ(W)</td></tr>
+    <tr><td>核心文件</td><td><code>excitation_trajectory.py</code></td><td>+ <code>excitation_ga.py</code></td></tr>
+    <tr><td>默认配置</td><td><code>excitation.yaml</code></td><td><code>excitation_ga.yaml</code></td></tr>
+  </table>
+
+  <h2>9. 自测</h2>
+
+  <div class="quiz" id="quiz1">
+    <h3>GA 适应度（fitness）在本仓库里对应什么？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 轨迹总时长越短越好</button></li>
+      <li><button type="button" data-answer="correct">B. 堆叠 regressor 矩阵条件数越小越好</button></li>
+      <li><button type="button" data-answer="wrong">C. 关节速度峰值越大越好</button></li>
+      <li><button type="button" data-answer="wrong">D. RNEA 计算次数越少越好</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz1-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz2">
+    <h3>N=5 时 GA 染色体有多少个基因？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. 5 个（每谐波一个幅值）</button></li>
+      <li><button type="button" data-answer="wrong">B. 20 个（四关节各 5 幅值）</button></li>
+      <li><button type="button" data-answer="correct">C. 40 个（四关节×五谐波×幅相各一）</button></li>
+      <li><button type="button" data-answer="wrong">D. 68 个（BIP 参数个数）</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz2-feedback"></div>
+  </div>
+
+  <div class="quiz" id="quiz3">
+    <h3>在线 excitation_runner 默认读哪个配置？</h3>
+    <ul class="quiz-options">
+      <li><button type="button" data-answer="wrong">A. open_manipulator_bringup 里的 GC yaml</button></li>
+      <li><button type="button" data-answer="wrong">B. excitation.yaml（template 模式）</button></li>
+      <li><button type="button" data-answer="correct">C. excitation_ga.yaml（GA 系数）</button></li>
+      <li><button type="button" data-answer="wrong">D. URDF 里的 joint_limits</button></li>
+    </ul>
+    <div class="quiz-feedback" id="quiz3-feedback"></div>
+  </div>
+
+  <aside>
+    <strong>有问题？</strong>在 Cursor 问：「GA 里 W 矩阵每一行对应什么？」、
+    「template 和 ga 模式 amplitude_scale 有何不同？」或
+    「帮我对比优化前后 condition_number」——我会按 MISSION 继续往下教。
+  </aside>
+
+  <nav class="lesson-nav">
+    <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a> ·
+    <a href="0009-omx-sysid-hardware-excitation.html">第 9 课</a> ·
+    <a href="../reference/sysid-ga-excitation.html">GA 速查</a> ·
+    <a href="../reference/sysid-excitation-trajectory.html">傅里叶速查</a> ·
+    <a href="../MISSION.md">MISSION</a>
+  </nav>
+
+  <script>
+    function bindQuiz(id, explain) {
+      const root = document.getElementById(id);
+      const feedback = document.getElementById(id + '-feedback');
+      root.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ok = btn.dataset.answer === 'correct';
+          feedback.textContent = ok ? '✓ ' + explain.correct : '✗ ' + explain.wrong;
+          feedback.className = 'quiz-feedback ' + (ok ? 'correct' : 'wrong');
+        });
+      });
+    }
+    bindQuiz('quiz1', {
+      correct: '对。Swevers 经典目标就是 min κ(W)；本仓库 GA 与此一致。',
+      wrong: '不对。GA 优化的是辨识可辨识性（条件数），不是时长或 RNEA 次数。'
+    });
+    bindQuiz('quiz2', {
+      correct: '对。4×5×2=40：每个谐波有幅值基因和相位基因。',
+      wrong: '不对。别忘了四关节，且幅、相各占一个基因。'
+    });
+    bindQuiz('quiz3', {
+      correct: '对。default_ga_config_path()；launch 可通过 excitation_config 覆盖。',
+      wrong: '不对。默认已是 GA 优化后的 excitation_ga.yaml，不是 template。'
+    });
+  </script>
+</body>
+</html>

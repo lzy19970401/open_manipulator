@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参考：GA 傅里叶激励轨迹</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .formula { font-family: var(--font-serif); margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+    dl.ref dt { font-family: var(--font-sans); font-weight: 600; margin-top: 0.75rem; }
+    dl.ref dd { margin-left: 0; color: var(--muted); font-size: 0.92rem; }
+    table.compact { width: 100%; font-size: 0.82rem; border-collapse: collapse; }
+    table.compact th, table.compact td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <p class="meta">速查 · 对应 <a href="../lessons/0013-omx-sysid-fourier-ga-excitation.html">第 13 课</a></p>
+
+  <h1>GA 傅里叶激励 · 公式与代码对照</h1>
+
+  <h2>多级傅里叶（位置形式）</h2>
+  <p class="formula">q_j = q₀_j + Σ a_{jk} sin(k ω₀ t + φ_{jk})，ω₀ = 2π/T</p>
+  <p class="formula">实现：<code>compute_joint_kinematics()</code> → <code>ExcitationTrajectory.sample(t)</code></p>
+
+  <h2>系数模式</h2>
+  <table class="compact">
+    <tr><th>coefficients_source</th><th>文件</th><th>系数来源</th></tr>
+    <tr><td><code>template</code></td><td>excitation.yaml</td><td><code>_build_harmonics()</code>，a∝1/k，φ=0</td></tr>
+    <tr><td><code>ga</code></td><td>excitation_ga.yaml</td><td><code>ga_coefficients</code> 段</td></tr>
+  </table>
+
+  <h2>GA 优化</h2>
+  <table class="compact">
+    <tr><th>项</th><th>值 / 说明</th><th>代码</th></tr>
+    <tr><td>目标</td><td>min κ(W)</td><td><code>evaluate_genes()</code></td></tr>
+    <tr><td>W 行</td><td>Pinocchio regressor + Fv/Fc 列</td><td><code>build_observation_matrix()</code></td></tr>
+    <tr><td>基因数</td><td>4×N×2（N=5 → 40）</td><td><code>_decode_individual()</code></td></tr>
+    <tr><td>默认 GA</td><td>80 pop × 120 gen</td><td><code>GAParameters</code></td></tr>
+    <tr><td>约束罚分</td><td>超限 → 1e12</td><td><code>evaluate_genes()</code></td></tr>
+  </table>
+
+  <h2>CLI</h2>
+  <dl class="ref">
+    <dt>离线优化</dt>
+    <dd><code>ros2 run open_manipulator_sysid excitation_ga_optimize [--quick]</code></dd>
+    <dt>打印轨迹</dt>
+    <dd><code>ros2 run open_manipulator_sysid excitation_trajectory_print --config …/excitation_ga.yaml</code></dd>
+    <dt>Gazebo</dt>
+    <dd><code>ros2 launch open_manipulator_sysid excitation_gazebo.launch.py</code></dd>
+    <dt>实机</dt>
+    <dd><code>ros2 launch open_manipulator_sysid excitation_hardware.launch.py port_name:=/dev/ttyUSB0</code></dd>
+  </dl>
+
+  <h2>数据流</h2>
+  <p class="formula">yaml → ExcitationTrajectory → sample(t) → [GA] build_observation_matrix → κ(W)</p>
+  <p class="formula">yaml → ExcitationTrajectory → build_excitation_trajectory_messages → excitation_runner → arm_controller</p>
+
+  <nav class="lesson-nav">
+    <a href="../lessons/0013-omx-sysid-fourier-ga-excitation.html">第 13 课</a> ·
+    <a href="sysid-excitation-trajectory.html">傅里叶速查</a> ·
+    <a href="../docs/adr/0001-omx-sysid-approach.md">ADR-0001</a>
+  </nav>
+
+</body>
+</html>

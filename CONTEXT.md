@@ -232,13 +232,41 @@ _Avoid_: test motion, random move
 单次或多次激励实验同步记录的 `(q, q̇, q̈, τ)` 时间序列及元数据（采样率、关节范围、实验编号）。
 _Avoid_: bag, log（未强调是辨识用途时）
 
-**Viscous friction coefficient（粘滞摩擦系数 Fv）**:
-与关节角速度成正比的摩擦项系数，线性模型中为 `τ_f = Fv · q̇`。
-_Avoid_: damping, B（未区分 URDF `<dynamics>` 阻尼时）
+**Commanded joint position（指令关节位置）**:
+**System identification** 激励运行中，`arm_controller` 在当前控制周期对四关节插值得到的 desired 位置；与 **Measured joint position** 成对用于跟踪对比，而非离线 yaml 重建的参考轨迹。
+_Avoid_: reference trajectory（指 excitation yaml 离线重算时）、setpoint（未说明是控制器 desired 时）
 
-**Coulomb friction coefficient（库仑摩擦系数 Fc）**:
-与运动方向有关的常值干摩擦系数，线性模型中为 `τ_f = Fc · sign(q̇)`。
-_Avoid_: static friction（未区分 stiction 模型时）
+**Commanded joint velocity（指令关节速度）**:
+激励运行中 `arm_controller` 对四关节插值得到的 desired 速度；自 **Excitation recording bag** 的 `controller_state.reference.velocities` 读取，用于指令轨迹验收图。
+_Avoid_: measured velocity（指 `/joint_states` 反馈时）、yaml 离线重建速度
+
+**Commanded joint acceleration（指令关节加速度）**:
+激励运行中 `arm_controller` 对四关节插值得到的 desired 加速度；自 **Excitation recording bag** 的 `controller_state.reference.accelerations` 读取，用于指令轨迹验收图。
+_Avoid_: 数值微分得到的 measured q̈、yaml 离线重建加速度
+
+**Measured joint position（测量关节位置）**:
+激励运行中 `/joint_states` 上报的四关节实测位置，作为辨识与跟踪对比的反馈侧。
+_Avoid_: feedback（未与指令侧区分时）、actual（指 action feedback 而非 bag 记录时）
+
+**Excitation recording bag（激励录包）**:
+单次 **Excitation trajectory** 运行录制的 rosbag，同时包含 **Commanded joint position** 与 **Measured joint position** 两条关节位置流，供跟踪对比与辨识共用同一时间轴。
+_Avoid_: feedback bag（仅强调一侧时）、dual bag（实现层拆成两个目录时）
+
+**Coulomb/viscous friction model（库伦+粘滞摩擦模型）**:
+四关节线性摩擦模型 **τ_f,j = Fv_j·q̇_j + Fc_j·sign(q̇_j)**，每关节 2 个参数（**Viscous friction coefficient Fv**、**Coulomb friction coefficient Fc**）；与 **Base inertial parameters** 联合辨识后写入 **Calibrated dynamics model**。与 **Pinocchio gravity compensation control mode** 的 Fv/Fc 前馈语义一致。
+_Avoid_: Stribeck friction model、f_c/f_s/f_v（已删除模块与 yaml 键时）
+
+**Identifiable base parameter set（可辨识最小动力学参数集）**:
+对 **Excitation trajectory** 堆叠 Pinocchio 五连杆（`link2`–`link5`）回归器后，经 SVD 得到的 **Symbolic base parameter combination** 线性独立子集；力矩计算 τ = Y_combo θ，不可辨识列落在回归器零空间。GA、离线辨识与模型验证共用此口径。
+_Avoid_: full URDF inertia vector（60 列原始 Pinocchio 参数时）、QR 单列选参（已退出主路径时）
+
+**Five-link dynamics model（五连杆动力学模型）**:
+系统辨识时只将 **Arm** 的 `link1`–`link5` 视为独立惯性体；**Gripper** 手指与 **End effector** 的 URDF 惯性列不参与回归（夹爪质量已体现在 `link5` 的 URDF 中）。
+_Avoid_: 7-body Pinocchio 满模型（指含 gripper 惯性列的辨识口径时）
+
+**Symbolic base parameter combination（符号化基参数组合）**:
+用标准惯性列（质量、质心矩、惯量张量分量）的加权和表示的一个可辨识标量，如 `link3.Ixx - link3.Iyy`；参考值由 URDF 代入组合矩阵得到。
+_Avoid_: single-column BIP（QR 直接选中某一 Pinocchio 列、未写成组合式时）
 
 **Static gravity validation（静态重力校验）**:
 在多个 **Named pose** 或 curated 构型下，以位置模式 hold 使 **Arm** 满足 **q̇≈0、q̈≈0**，比较实测力矩与 **Nominal dynamics model** 重力项是否一致；用于在 **Excitation trajectory** 之前诊断 URDF 质量、质心、关节零位等问题。仅考察 **Generalized gravity g(q)**，不涉及惯量矩阵或 **BIP** 回归。
@@ -271,3 +299,7 @@ _Avoid_: test pose（未强调是评测 curated 集时）
 **Compensation evaluation（补偿评测）**:
 在 **Hardware** 上对比 **Compensation mode**（G / G+C / G+C+F）的固定实验协议：静态 **Validation pose** hold 录 bag、**Backdrive trial** 录 bag，离线计算 **Gravity residual** 与 **Dynamics residual** 等指标。操作说明见 [docs/open-manipulator-x-compensation-evaluation.md](docs/open-manipulator-x-compensation-evaluation.md)。
 _Avoid_: sysid run（指 BIP/摩擦回归流水线时）、tuning session（指单关节手调 Fv 时）
+
+**Model validation run（模型验证运行）**:
+使用 **Test trajectory**（`test_trajectory.yaml`，默认 2 个傅里叶周期）在仿真或实机录 bag，离线执行 BIP 与 **Nominal dynamics model** 对比表、以及测量力矩与 **Calibrated dynamics model** 预测力矩的四关节曲线图；与完整 **System identification** 激励（GA/长周期）分工。
+_Avoid_: excitation run（指正式辨识录 bag 时）、compensation evaluation（指 GC 档位对比时）

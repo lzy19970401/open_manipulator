@@ -1,15 +1,21 @@
-"""OpenMANIPULATOR-X system identification utilities.
+"""OpenMANIPULATOR-X system identification.
 
-Package layout (one module per seam):
+Domain-aligned subpackages (see CONTEXT.md):
 
 excitation_trajectory
-    Fourier trajectory, safety limits, quintic approach — config-driven math only.
-excitation_runner
-    ROS node: send FollowJointTrajectory goal to arm_controller.
-bag_to_dataset
-    Rosbag2 ``/joint_states`` → uniform dataset (includes effort LSB → N·m).
-identification_dataset
-    ``IdentificationDataset`` container, resampling, validation.
-regress
-    Offline friction least squares (fixed URDF inertia).
+    Excitation trajectory design, GA optimization, ROS runner.
+excitation_recording
+    Excitation recording bag → Identification dataset.
+five_link_dynamics
+    Five-link dynamics model (SVD BIP), reference tables.
+system_identification
+    System identification (BIP + Fv/Fc least squares).
+model_validation
+    Model validation run (BIP compare, torque/trajectory plots).
+pinocchio_support
+    Pinocchio model loading and shared numerics.
+reference
+    URDF nominal minimal-parameter reference tables.
+_experimental
+    Non-production experiments (isolated from main path).
 """

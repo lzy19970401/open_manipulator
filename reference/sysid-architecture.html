@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>速查：open_manipulator_sysid 架构与命令</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.ref { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.82rem; }
+    table.ref th, table.ref td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; vertical-align: top; }
+    table.ref th { background: #eee; text-align: left; }
+    pre { font-size: 0.75rem; overflow-x: auto; }
+    .pipe { font-family: var(--font-sans); font-size: 0.85rem; background: #f0f4ff; padding: 0.6rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<p class="meta">参考 · sysid 架构 · 打印友好 ·
+  <a href="../lessons/0014-omx-sysid-architecture-and-usage.html">第 14 课</a>
+</p>
+
+<h1>open_manipulator_sysid 速查</h1>
+
+<h2>运行前提</h2>
+<ul>
+  <li>主机：<code>./docker/container.sh enter</code></li>
+  <li>容器：<code>cd ~/ros2_ws && colcon build --packages-select open_manipulator_sysid --symlink-install && source install/setup.bash</code></li>
+  <li>硬依赖：ROS 2 Jazzy、Pinocchio、SciPy、NumPy（勿 pip 升级 numpy 破坏 scipy）</li>
+</ul>
+
+<h2>域子包 → 目录</h2>
+<table class="ref">
+  <tr><th>CONTEXT 术语</th><th>Python 子包</th><th>核心文件</th></tr>
+  <tr><td>Excitation trajectory</td><td><code>excitation_trajectory/</code></td><td>trajectory.py, ga_optimizer.py, runner.py</td></tr>
+  <tr><td>Excitation recording bag</td><td><code>excitation_recording/</code></td><td>bag_reader.py, dataset.py</td></tr>
+  <tr><td>Five-link dynamics model</td><td><code>five_link_dynamics/</code></td><td>base_parameters.py, reference_tables.py</td></tr>
+  <tr><td>System identification</td><td><code>system_identification/</code></td><td>identify.py, friction.py</td></tr>
+  <tr><td>Model validation run</td><td><code>model_validation/</code></td><td>evaluation.py, bip_compare.py, torque_plot.py</td></tr>
+  <tr><td>（共享）</td><td><code>pinocchio_support/</code></td><td>model_loader.py, numerics.py</td></tr>
+</table>
+
+<h2>流水线命令</h2>
+<div class="pipe">
+  <strong>设计</strong> excitation_ga_optimize → excitation.yaml<br>
+  <strong>仿真录包</strong> launch excitation_gazebo.launch.py<br>
+  <strong>轨迹图</strong> sysid_trajectory_compare_plot --bag …<br>
+  <strong>辨识</strong> sysid_identify_bag --bag …<br>
+  <strong>验证</strong> launch test_trajectory_* → sysid_bip_urdf_compare / sysid_torque_compare_plot
+</div>
+
+<h2>配置</h2>
+<table class="ref">
+  <tr><th>文件</th><th>用途</th></tr>
+  <tr><td><code>config/excitation.yaml</code></td><td>GA 系数、q₀、摩擦初值、运行时调度（主路径）</td></tr>
+  <tr><td><code>config/test_trajectory.yaml</code></td><td>短轨迹 Model validation run</td></tr>
+</table>
+
+<h2>录包 topic</h2>
+<pre>/joint_states
+/arm_controller/controller_state   # reference.positions / velocities / accelerations</pre>
+
+<h2>输出</h2>
+<pre>results/dynamics_identified.yaml   # five_link_base_parameters + friction Fv/Fc
+results/report.html
+/workspace/sysid_results/bags/…
+/workspace/sysid_results/trajectory_plots/…</pre>
+
+<p class="meta">ADR：<a href="../docs/adr/0011-omx-unified-five-link-bip.md">0011</a> ·
+<a href="../docs/adr/0012-omx-sysid-domain-subpackages.md">0012</a></p>
+
+</body>
+</html>

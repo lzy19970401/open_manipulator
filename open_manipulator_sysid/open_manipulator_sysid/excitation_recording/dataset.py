@@ -102,6 +102,16 @@ def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
     return filtered
 
 
+def lowpass_moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    """FIR low-pass via per-column moving average (odd window, edge-padded).
+
+    ``window <= 1`` returns a copy of ``values`` unchanged. Even ``window`` is
+    bumped to the next odd integer. At uniform sample rate ``dt``, an N-tap
+    average attenuates content above roughly ``1 / (N * dt)`` Hz.
+    """
+    return _moving_average(values, window)
+
+
 def differentiate_central(
     values: np.ndarray,
     times_s: np.ndarray,
@@ -136,6 +146,64 @@ def filtered_acceleration(
     """Differentiate velocity then lightly smooth acceleration."""
     raw = differentiate_central(velocity, times_s)
     return _moving_average(raw, smooth_window)
+
+
+def filtered_measured_kinematics_on_times(
+    measured_times_s: np.ndarray,
+    measured_position: np.ndarray,
+    measured_velocity: np.ndarray,
+    query_times_s: np.ndarray,
+    *,
+    sample_dt_s: float = 0.01,
+    acceleration_smooth_window: int = 11,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Resample measured q/q̇, derive and FIR-smooth q̈, interpolate onto ``query_times_s``.
+
+    ``q`` and ``q̇`` are only resampled (no low-pass). ``q̈`` uses the same
+    central-difference + moving-average pipeline as :func:`bag_to_dataset`.
+    """
+    if measured_times_s.size < 2:
+        raise ValueError('Need at least two measured samples for filtered kinematics.')
+    if query_times_s.size == 0:
+        empty = np.empty((0, measured_position.shape[1]), dtype=float)
+        return empty, empty.copy(), empty.copy()
+
+    overlap_start = max(float(measured_times_s[0]), float(query_times_s[0]))
+    overlap_end = min(float(measured_times_s[-1]), float(query_times_s[-1]))
+    if overlap_end <= overlap_start:
+        raise ValueError('Measured and query time spans do not overlap.')
+
+    mask = (measured_times_s >= overlap_start) & (measured_times_s <= overlap_end)
+    times = measured_times_s[mask]
+    position = measured_position[mask]
+    velocity = measured_velocity[mask]
+
+    grid, position_rs = resample_uniform(times, position, sample_dt_s=sample_dt_s)
+    _, velocity_rs = resample_uniform(times, velocity, sample_dt_s=sample_dt_s)
+
+    acceleration_rs = filtered_acceleration(
+        velocity_rs,
+        grid,
+        smooth_window=acceleration_smooth_window,
+    )
+
+    def _interp(values: np.ndarray) -> np.ndarray:
+        interpolated = np.empty((query_times_s.size, values.shape[1]), dtype=float)
+        for joint_index in range(values.shape[1]):
+            interpolated[:, joint_index] = np.interp(
+                query_times_s,
+                grid,
+                values[:, joint_index],
+            )
+        in_span = (query_times_s >= overlap_start) & (query_times_s <= overlap_end)
+        interpolated[~in_span] = np.nan
+        return interpolated
+
+    return (
+        _interp(position_rs),
+        _interp(velocity_rs),
+        _interp(acceleration_rs),
+    )
 
 
 def resample_uniform(

@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 #
-# Gazebo excitation launch (position-mode OMX + bringup controller yaml + rosbag).
-#
-# Startup order (aligned with open_manipulator_x_gazebo.launch.py):
-#   Gazebo → spawn → spawners → excitation + bag
-#
-# After the trajectory (including post_hold) completes, excitation_runner keeps
-# spinning with arm_controller holding q0. Press Ctrl+C to exit; rosbag stops
-# automatically when motion finishes.
+# Gazebo model-validation trajectory (test profile + rosbag).
+# Shorter than full sysid excitation; feeds bip_urdf_compare / torque_compare_plot.
 #
 import os
 from datetime import datetime, timezone
@@ -36,13 +30,13 @@ def generate_launch_description():
         'open_manipulator_bringup'
     )
     sysid_share = get_package_share_directory('open_manipulator_sysid')
-    default_excitation_config = os.path.join(sysid_share, 'config', 'excitation.yaml')
+    default_excitation_config = os.path.join(sysid_share, 'config', 'test_trajectory.yaml')
 
     default_bag_dir = str(
         Path('/workspace')
         / 'sysid_results'
         / 'bags'
-        / f'gazebo_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}'
+        / f'test_gazebo_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}'
     )
 
     world = LaunchConfiguration('world')
@@ -180,23 +174,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'excitation_periods',
-            default_value='3',
-            description='Number of Fourier excitation periods (first period(s) discarded for sysid)',
+            default_value='2',
+            description='Fourier periods for validation (discard_periods=1 in test_trajectory.yaml)',
         ),
         DeclareLaunchArgument(
             'excitation_config',
             default_value=default_excitation_config,
-            description='Path to excitation yaml (default: excitation.yaml)',
-        ),
-        DeclareLaunchArgument(
-            'sigterm_timeout',
-            default_value='30.0',
-            description='Launch-wide SIGINT→SIGTERM timeout for ExecuteProcess shutdown',
-        ),
-        DeclareLaunchArgument(
-            'sigkill_timeout',
-            default_value='10.0',
-            description='Launch-wide SIGTERM→SIGKILL timeout for ExecuteProcess shutdown',
+            description='Path to test_trajectory.yaml',
         ),
         gazebo_resource_path,
         gazebo,

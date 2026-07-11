@@ -4,14 +4,15 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
-from open_manipulator_sysid.bag_to_dataset import (
+from open_manipulator_sysid.excitation_recording.bag_reader import (
     XM430_PRESENT_CURRENT_NM_MULTIPLIER,
     arm_effort_array_to_nm,
     bag_to_dataset,
     detect_bag_storage_id,
 )
-from open_manipulator_sysid.identification_dataset import (
+from open_manipulator_sysid.excitation_recording.dataset import (
     IdentificationDataset,
     filtered_acceleration,
     resample_uniform,
@@ -20,13 +21,9 @@ from open_manipulator_sysid.identification_dataset import (
 from open_manipulator_sysid.excitation_trajectory import (
     ARM_JOINTS,
     ExcitationTrajectory,
-    build_excitation_trajectory_messages,
+    build_sysid_runtime_trajectory_messages,
     default_config_path,
-)
-from open_manipulator_sysid.regress import (
-    NUM_FRICTION_PARAMS,
-    require_pinocchio,
-    run_dataset_regression,
+    runtime_config_from_yaml,
 )
 
 
@@ -98,27 +95,6 @@ def test_successful_gazebo_bag_passes_validation() -> None:
     assert dataset.velocity.std(axis=0).min() > 0.01
 
 
-def test_hardware_bag_regression_finite_friction() -> None:
-    bag_dir = (
-        Path(__file__).resolve().parents[1]
-        / 'results'
-        / 'bags'
-        / 'hardware_20260622_150340'
-    )
-    if not (bag_dir / 'metadata.yaml').is_file():
-        pytest.skip('Hardware bag fixture not present')
-
-    require_pinocchio()
-    dataset = bag_to_dataset(bag_dir, trim_start_s=7.0, trim_end_s=2.5)
-    assert dataset.torque.max() < 5.0
-
-    result = run_dataset_regression(dataset)
-    assert np.all(np.isfinite(result.viscous))
-    assert np.all(np.isfinite(result.coulomb))
-    assert np.max(np.abs(result.viscous)) < 100.0
-    assert np.max(np.abs(result.coulomb)) < 100.0
-
-
 def test_resample_uniform_interpolates_endpoints() -> None:
     times = np.array([0.0, 0.5, 1.0])
     values = np.array([[0.0], [0.5], [1.0]])
@@ -137,35 +113,45 @@ def test_filtered_acceleration_is_finite() -> None:
     assert np.all(np.isfinite(acceleration))
 
 
-def test_build_excitation_trajectory_includes_phases() -> None:
-    trajectory = ExcitationTrajectory.from_yaml(default_config_path())
-    samples = build_excitation_trajectory_messages(
+def test_build_sysid_runtime_trajectory_includes_phases() -> None:
+    config_path = default_config_path()
+    with config_path.open('r', encoding='utf-8') as handle:
+        config = yaml.safe_load(handle)
+    runtime = runtime_config_from_yaml(config)
+    trajectory = ExcitationTrajectory.from_yaml(config_path)
+    samples, schedule = build_sysid_runtime_trajectory_messages(
         trajectory,
         start_positions={joint: 0.0 for joint in trajectory.joints},
-        approach_duration_s=1.0,
-        hold_duration_s=2.0,
-        num_periods=1,
+        to_q0_duration_s=runtime['to_q0_duration_s'],
+        ingress_spline_duration_s=runtime['ingress_spline_duration_s'],
+        num_periods=2,
+        egress_spline_duration_s=runtime['egress_spline_duration_s'],
+        q0_hold_duration_s=runtime['q0_hold_duration_s'],
         sample_dt_s=0.1,
-        settle_duration_s=2.0,
+        discard_periods=int(runtime['discard_periods']),
     )
     assert len(samples) > 0
     assert samples[0].time_s == pytest.approx(0.0)
-    last_time = samples[-1].time_s
-    expected = 1.0 + 2.0 + trajectory.period_s + 2.0
-    assert last_time == pytest.approx(expected, abs=0.15)
+    assert samples[-1].time_s == pytest.approx(schedule.total_duration_s, abs=0.15)
 
 
 def test_last_trajectory_point_has_zero_end_velocity() -> None:
     """JointTrajectoryController rejects goals whose last point has non-zero velocity."""
-    trajectory = ExcitationTrajectory.from_yaml(default_config_path())
-    samples = build_excitation_trajectory_messages(
+    config_path = default_config_path()
+    with config_path.open('r', encoding='utf-8') as handle:
+        config = yaml.safe_load(handle)
+    runtime = runtime_config_from_yaml(config)
+    trajectory = ExcitationTrajectory.from_yaml(config_path)
+    samples, _schedule = build_sysid_runtime_trajectory_messages(
         trajectory,
         start_positions={joint: 0.0 for joint in trajectory.joints},
-        approach_duration_s=5.0,
-        hold_duration_s=2.0,
-        num_periods=1,
+        to_q0_duration_s=runtime['to_q0_duration_s'],
+        ingress_spline_duration_s=runtime['ingress_spline_duration_s'],
+        num_periods=2,
+        egress_spline_duration_s=runtime['egress_spline_duration_s'],
+        q0_hold_duration_s=runtime['q0_hold_duration_s'],
         sample_dt_s=0.01,
-        settle_duration_s=2.0,
+        discard_periods=int(runtime['discard_periods']),
     )
     last = samples[-1]
     for joint in ARM_JOINTS:
@@ -188,54 +174,4 @@ def test_dataset_npz_roundtrip(tmp_path: Path) -> None:
     assert loaded.num_samples == dataset.num_samples
     assert loaded.sample_dt_s == pytest.approx(dataset.sample_dt_s)
 
-
-def test_dataset_regression_from_synthetic_npz(tmp_path: Path) -> None:
-    pinocchio = pytest.importorskip('pinocchio')
-    del pinocchio
-
-    require_pinocchio()
-    trajectory = ExcitationTrajectory.from_yaml(default_config_path())
-    from open_manipulator_sysid.regress import generate_synthetic_dataset, load_model, default_urdf_path
-
-    model, data = load_model(default_urdf_path())
-    _, torque, _ = generate_synthetic_dataset(
-        trajectory,
-        model,
-        data,
-        num_periods=1,
-        sample_dt_s=0.02,
-        noise_std=0.0,
-    )
-
-    num_rows = len(torque) // 4
-    times = np.arange(num_rows, dtype=float) * 0.02
-    dataset = IdentificationDataset(
-        times_s=times,
-        position=np.zeros((num_rows, 4)),
-        velocity=np.zeros((num_rows, 4)),
-        acceleration=np.zeros((num_rows, 4)),
-        torque=torque.reshape(num_rows, 4),
-        sample_dt_s=0.02,
-    )
-
-    # Populate kinematics from trajectory for meaningful dynamics subtraction.
-    for index, time_s in enumerate(times):
-        sample = trajectory.sample(time_s % trajectory.period_s)
-        for joint_index, joint in enumerate(trajectory.joints):
-            dataset.position[index, joint_index] = sample.position[joint]
-            dataset.velocity[index, joint_index] = sample.velocity[joint]
-            dataset.acceleration[index, joint_index] = sample.acceleration[joint]
-
-    npz_path = tmp_path / 'synthetic.npz'
-    dataset.save_npz(npz_path)
-
-    result = run_dataset_regression(
-        IdentificationDataset.load_npz(npz_path),
-        output_dir=tmp_path / 'results',
-        dataset_source=str(npz_path),
-    )
-    assert np.isfinite(result.residual_norm)
-    assert np.isfinite(result.condition_number)
-    assert result.matrix_rank <= NUM_FRICTION_PARAMS
-    assert (tmp_path / 'results' / 'report.html').is_file()
 

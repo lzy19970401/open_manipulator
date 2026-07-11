@@ -10,7 +10,7 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from sensor_msgs.msg import JointState
 
-from open_manipulator_sysid.bag_to_dataset import detect_bag_storage_id
+from open_manipulator_sysid.excitation_recording.bag_reader import detect_bag_storage_id
 
 
 def read_messages(input_bag: str):

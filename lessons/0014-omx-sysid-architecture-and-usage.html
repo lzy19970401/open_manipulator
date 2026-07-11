@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 14 课：sysid 代码架构与使用手册</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    table.flow { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: 0.85rem; }
+    table.flow th, table.flow td { border: 1px solid var(--border); padding: 0.45rem 0.55rem; vertical-align: top; }
+    table.flow th { background: #eee; text-align: left; }
+    pre { font-size: 0.78rem; overflow-x: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+    .arch { background: #f8fafc; border: 1px solid var(--border); padding: 1rem; margin: 1.5rem 0; font-family: var(--font-sans); font-size: 0.82rem; line-height: 1.5; }
+    .box { display: inline-block; border: 2px solid #334155; padding: 0.35rem 0.6rem; margin: 0.2rem; background: #fff; border-radius: 3px; }
+    .box.deep { background: #1e293b; color: #fff; border-color: #1e293b; }
+    .arrow { color: var(--muted); margin: 0 0.15rem; }
+    .quiz button { display: block; width: 100%; text-align: left; margin: 0.35rem 0; padding: 0.5rem 0.65rem; font-family: var(--font-sans); font-size: 0.9rem; cursor: pointer; border: 1px solid var(--border); background: var(--card); border-radius: 4px; }
+    .quiz button.correct { border-color: var(--correct); background: #f0fdf4; }
+    .quiz button.wrong { border-color: var(--wrong); background: #fef2f2; }
+    .quiz .feedback { font-family: var(--font-sans); font-size: 0.88rem; margin-top: 0.5rem; min-height: 1.2rem; }
+    code.file { font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+<p class="meta">第 14 课 · 架构与实操 · 约 25 分钟 ·
+  <a href="0013-omx-sysid-fourier-ga-excitation.html">← 第 13 课</a> ·
+  <a href="../reference/sysid-architecture.html">架构速查</a> ·
+  <a href="../CONTEXT.md">CONTEXT.md</a>
+</p>
+
+<h1>open_manipulator_sysid：代码架构、依赖与怎么用</h1>
+
+<p class="lead">
+  本课回答三个问题：<strong>包为什么长成现在这样</strong>、<strong>跑起来依赖什么</strong>、<strong>从 GA 到辨识验收按什么顺序敲命令</strong>。
+  代码已按 <a href="../docs/adr/0012-omx-sysid-domain-subpackages.md">ADR-0012</a> 拆成域子包；术语与 <code>CONTEXT.md</code> 一一对应。
+</p>
+
+<aside>
+  <strong>主参考：</strong>仓库 <code>open_manipulator_sysid/README.md</code>、
+  <code>docs/adr/0011-omx-unified-five-link-bip.md</code>、
+  <code>docs/adr/0012-omx-sysid-domain-subpackages.md</code>。
+  先读 <a href="0006-omx-sysid-excitation-trajectory.html">第 6 课</a>（傅里叶激励）与
+  <a href="0013-omx-sysid-fourier-ga-excitation.html">第 13 课</a>（GA）再读本课，负担更小。
+</aside>
+
+<h2>1. 架构：用「域」导航，而不是记 20 个文件名</h2>
+
+<p>好的架构在这里指：<strong>每个子目录对应一个业务概念（seam）</strong>，改激励就只进 <code>excitation_trajectory/</code>，改录包就只进 <code>excitation_recording/</code>。CLI 名（<code>ros2 run …</code>）保持稳定，实现藏在子包里。</p>
+
+<div class="arch">
+  <span class="box deep">excitation_trajectory/</span>
+  <span class="arrow">→</span> 设计 q(t)、GA、Gazebo 发轨迹<br><br>
+  <span class="box deep">excitation_recording/</span>
+  <span class="arrow">→</span> bag 读入、对齐、<code>IdentificationDataset</code><br><br>
+  <span class="box deep">five_link_dynamics/</span>
+  <span class="arrow">→</span> 五连杆 SVD 组合 BIP、θ_ref 表<br><br>
+  <span class="box deep">system_identification/</span>
+  <span class="arrow">→</span> 联合 LS：θ + Fv/Fc → yaml<br><br>
+  <span class="box deep">model_validation/</span>
+  <span class="arrow">→</span> θ 对比、力矩 RMSE、轨迹跟踪图<br><br>
+  <span class="box">pinocchio_support/</span> Pinocchio 加载 URDF/xacro、条件数工具<br>
+  <span class="box">reference/</span> 打印 URDF 名义最小参数表<br>
+  <span class="box">_experimental/</span> figaroh 等（主路径不 import）
+</div>
+
+<p><strong>数据流（一条线记全流程）：</strong></p>
+<pre>excitation.yaml (GA 系数)
+    → excitation_runner 跟踪傅里叶段
+    → Excitation recording bag（双 topic）
+    → bag_reader 重采样 + trim
+    → identify 最小二乘
+    → dynamics_identified.yaml
+    → model_validation 画图 / 对比表</pre>
+
+<h2>2. 执行依赖：必须先满足什么</h2>
+
+<table class="flow">
+  <tr><th>层级</th><th>依赖</th><th>说明</th></tr>
+  <tr><td>环境</td><td>Docker 容器</td><td>主机勿 <code>colcon build</code>；Pinocchio/ROS 版本与镜像一致</td></tr>
+  <tr><td>构建</td><td><code>colcon build --packages-select open_manipulator_sysid</code></td><td>每次改 Python 后 <code>source install/setup.bash</code></td></tr>
+  <tr><td>数学</td><td>Pinocchio + SciPy</td><td>回归器、RNEA、<code>least_squares</code></td></tr>
+  <tr><td>仿真</td><td>Gazebo + bringup 栈</td><td><code>excitation_gazebo.launch.py</code> 拉起控制器与 runner</td></tr>
+  <tr><td>实机</td><td>USB Dynamixel + effort 可读</td><td><code>excitation_hardware.launch.py</code>；力矩 LSB 在 bag_reader 转 N·m</td></tr>
+  <tr><td>配置</td><td><code>config/excitation.yaml</code></td><td>单文件含 <code>ga_coefficients</code>；GA 优化写回同一文件</td></tr>
+</table>
+
+<aside>
+  <strong>坑：</strong>容器内若 <code>pip install</code> 把 numpy 升到 2.x，apt 的 SciPy 会崩。
+  见 <code>open_manipulator_sysid/docs/model-validation.md</code> 故障排除段。
+</aside>
+
+<h2>3. 子包与关键模块对照</h2>
+
+<table class="flow">
+  <tr><th>子包</th><th>关键文件</th><th>你什么时候碰它</th></tr>
+  <tr>
+    <td><code>excitation_trajectory/</code></td>
+    <td><code>trajectory.py</code> · <code>ga_optimizer.py</code> · <code>runner.py</code></td>
+    <td>改傅里叶/调度；离线 GA；在线发 <code>FollowJointTrajectory</code></td>
+  </tr>
+  <tr>
+    <td><code>excitation_recording/</code></td>
+    <td><code>bag_reader.py</code> · <code>dataset.py</code></td>
+    <td>录包后转均匀采样；辨识前校验数据集有运动</td>
+  </tr>
+  <tr>
+    <td><code>five_link_dynamics/</code></td>
+    <td><code>base_parameters.py</code> · <code>reference_tables.py</code></td>
+    <td>理解组合 BIP；打印 θ_ref；五连杆对比 CLI</td>
+  </tr>
+  <tr>
+    <td><code>system_identification/</code></td>
+    <td><code>identify.py</code> · <code>friction.py</code></td>
+    <td>bag/合成数据联合辨识；输出 <code>dynamics_identified.yaml</code></td>
+  </tr>
+  <tr>
+    <td><code>model_validation/</code></td>
+    <td><code>evaluation.py</code> · <code>bip_compare.py</code> · <code>torque_plot.py</code> · <code>trajectory_plot.py</code></td>
+    <td>短轨迹验收；力矩拟合；指令 vs 测量八张图</td>
+  </tr>
+  <tr>
+    <td><code>pinocchio_support/</code></td>
+    <td><code>model_loader.py</code></td>
+    <td>加载 xacro、堆叠回归器（几乎所有离线步骤共用）</td>
+  </tr>
+</table>
+
+<p>辨识口径：<strong>五连杆 SVD 组合 BIP + 每关节 Fv/Fc</strong>（8 摩擦参数），与 Pinocchio GC 前馈一致。见 <a href="../docs/adr/0011-omx-unified-five-link-bip.md">ADR-0011</a>。</p>
+
+<h2>4. 怎么用：三条常用流水线</h2>
+
+<h3>流水线 A — 完整系统辨识（Gazebo 或实机）</h3>
+
+<p><span class="step-num" style="background:#2563eb;color:#fff;font-size:0.75rem;padding:0.1rem 0.45rem;border-radius:3px;">1</span> 容器内构建并 source（见 §2）。</p>
+
+<p><span class="step-num" style="background:#2563eb;color:#fff;font-size:0.75rem;padding:0.1rem 0.45rem;border-radius:3px;">2</span>（可选）重跑 GA，更新 <code>config/excitation.yaml</code>：</p>
+<pre>ros2 run open_manipulator_sysid excitation_ga_optimize
+ros2 run open_manipulator_sysid sysid_excitation_trajectory_plot   # 看单周期形状</pre>
+
+<p><span class="step-num" style="background:#2563eb;color:#fff;font-size:0.75rem;padding:0.1rem 0.45rem;border-radius:3px;">3</span> 仿真录包（默认 5 周期，双 topic）：</p>
+<pre>ros2 launch open_manipulator_sysid excitation_gazebo.launch.py</pre>
+
+<p><span class="step-num" style="background:#2563eb;color:#fff;font-size:0.75rem;padding:0.1rem 0.45rem;border-radius:3px;">4</span> 轨迹验收图（指令来自 controller_state，不是 yaml 重算）：</p>
+<pre>ros2 run open_manipulator_sysid sysid_trajectory_compare_plot \
+  --bag /workspace/sysid_results/bags/gazebo_YYYYMMDD_HHMMSS \
+  --output-dir /workspace/sysid_results/trajectory_plots/gazebo_YYYYMMDD_HHMMSS</pre>
+
+<p><span class="step-num" style="background:#2563eb;color:#fff;font-size:0.75rem;padding:0.1rem 0.45rem;border-radius:3px;">5</span> 离线辨识：</p>
+<pre>ros2 run open_manipulator_sysid sysid_identify_bag \
+  --bag /workspace/sysid_results/bags/gazebo_YYYYMMDD_HHMMSS \
+  --output-dir /workspace/sysid_results</pre>
+
+<p>产出：<code>dynamics_identified.yaml</code>（<code>five_link_base_parameters</code> + <code>friction</code>）、<code>report.html</code>。</p>
+
+<h3>流水线 B — 模型验证（短轨迹，快）</h3>
+
+<pre>ros2 launch open_manipulator_sysid test_trajectory_gazebo.launch.py
+
+ros2 run open_manipulator_sysid sysid_bip_urdf_compare \
+  --bag /workspace/sysid_results/bags/test_gazebo_… \
+  --xacro-mapping use_sim:=true
+
+ros2 run open_manipulator_sysid sysid_torque_compare_plot \
+  --bag /workspace/sysid_results/bags/test_gazebo_… \
+  --output-dir /workspace/sysid_results/torque_plots</pre>
+
+<p>验收主指标：<strong>力矩 RMSE</strong>，不是逐列惯性「相对误差」（组合 BIP 与单列 URDF 不可直接比）。</p>
+
+<h3>流水线 C — 无仿真烟雾测试</h3>
+
+<pre>pytest src/open_manipulator/open_manipulator_sysid/test -q
+ros2 run open_manipulator_sysid sysid_identify_synthetic   # 合成数据辨识</pre>
+
+<h2>5. 录包与辨识的「接缝」细节</h2>
+
+<table class="flow">
+  <tr><th>概念</th><th>来源</th></tr>
+  <tr><td>Measured joint position</td><td><code>/joint_states</code></td></tr>
+  <tr><td>Commanded joint position / velocity / acceleration</td><td><code>/arm_controller/controller_state</code> 的 <code>reference.*</code></td></tr>
+  <tr><td>辨识用 τ</td><td><code>/joint_states.effort</code>（Gazebo N·m；实机 LSB→N·m）</td></tr>
+  <tr><td>辨识时间窗</td><td>跳过 <code>discard_periods</code> 后的傅里叶段（见 <code>excitation.yaml</code> <code>runtime</code>）</td></tr>
+</table>
+
+<p>见 <a href="../docs/adr/0009-omx-excitation-recording-bag.md">ADR-0009</a>。</p>
+
+<h2>6. 检索练习</h2>
+
+<p>先自己想，再点选项。答错没关系——问 Agent 追问即可。</p>
+
+<div class="quiz" id="q1">
+  <p><strong>Q1.</strong> 改 GA 优化目标（条件数 κ）应主要打开哪个子包？</p>
+  <button type="button" data-answer="wrong">model_validation/ 里的 evaluation.py</button>
+  <button type="button" data-answer="correct">excitation_trajectory/ 里的 ga_optimizer.py</button>
+  <button type="button" data-answer="wrong">system_identification/ 里的 friction.py</button>
+  <button type="button" data-answer="wrong">pinocchio_support/ 里的 model_loader.py</button>
+  <div class="feedback" aria-live="polite"></div>
+</div>
+
+<div class="quiz" id="q2">
+  <p><strong>Q2.</strong> 完整辨识后 dynamics_identified.yaml 里 BIP 写在哪个键下？</p>
+  <button type="button" data-answer="wrong">base_parameters 单列 QR 结果</button>
+  <button type="button" data-answer="correct">five_link_base_parameters 组合 θ</button>
+  <button type="button" data-answer="wrong">stribeck_friction 七参数块</button>
+  <button type="button" data-answer="wrong">ga_coefficients 傅里叶系数</button>
+  <div class="feedback" aria-live="polite"></div>
+</div>
+
+<div class="quiz" id="q3">
+  <p><strong>Q3.</strong> sysid_trajectory_compare_plot 的「指令」轨迹从哪来？</p>
+  <button type="button" data-answer="wrong">离线用 excitation.yaml 重算傅里叶</button>
+  <button type="button" data-answer="correct">bag 里 controller_state.reference</button>
+  <button type="button" data-answer="wrong">MoveIt 规划缓存的 path</button>
+  <button type="button" data-answer="wrong">仅 /joint_states 位置作指令</button>
+  <div class="feedback" aria-live="polite"></div>
+</div>
+
+<h2>7. 下一步</h2>
+
+<ul>
+  <li>打印/收藏 <a href="../reference/sysid-architecture.html">架构速查</a>，跑通流水线 A 一次。</li>
+  <li>对照 <a href="0009-omx-sysid-hardware-excitation.html">第 9 课</a> 把 Gazebo 换成实机。</li>
+  <li>有不清楚的子包职责、import 路径或命令参数，<strong>直接问 Agent</strong>（可附 bag 路径或报错）。</li>
+</ul>
+
+<script>
+document.querySelectorAll('.quiz button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var quiz = btn.closest('.quiz');
+    var fb = quiz.querySelector('.feedback');
+    quiz.querySelectorAll('button').forEach(function(b) {
+      b.classList.remove('correct', 'wrong');
+      b.disabled = true;
+    });
+    if (btn.dataset.answer === 'correct') {
+      btn.classList.add('correct');
+      fb.textContent = '正确。';
+    } else {
+      btn.classList.add('wrong');
+      fb.textContent = '不对。看本题绿色选项，或问 Agent 解释。';
+      quiz.querySelector('[data-answer="correct"]').classList.add('correct');
+    }
+  });
+});
+</script>
+
+</body>
+</html>

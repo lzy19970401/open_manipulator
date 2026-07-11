@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 
 from open_manipulator_sysid.excitation_trajectory import ARM_JOINTS
-from open_manipulator_sysid.identification_dataset import (
+from open_manipulator_sysid.excitation_recording.dataset import (
     IdentificationDataset,
     filtered_acceleration,
     resample_uniform,
@@ -19,6 +19,10 @@ from open_manipulator_sysid.identification_dataset import (
 XM430_PRESENT_CURRENT_NM_MULTIPLIER = 0.00479627
 # Stall torque ~4.1 N·m; magnitudes above this are almost certainly Dynamixel LSB.
 MAX_REASONABLE_ARM_TORQUE_NM = 5.0
+
+JOINT_STATES_TOPIC = '/joint_states'
+ARM_CONTROLLER_STATE_TOPIC = '/arm_controller/controller_state'
+EXCITATION_RECORDING_TOPICS = (JOINT_STATES_TOPIC, ARM_CONTROLLER_STATE_TOPIC)
 
 
 def arm_effort_array_to_nm(efforts: np.ndarray) -> np.ndarray:
@@ -65,6 +69,70 @@ def _open_bag_reader(bag_dir: Path):
         ),
     )
     return reader
+
+
+def bag_topic_names(bag_dir: Path | str) -> set[str]:
+    """Return topic names present in a rosbag2 directory."""
+    reader = _open_bag_reader(Path(bag_dir))
+    return {item.name for item in reader.get_all_topics_and_types()}
+
+
+def require_excitation_recording_bag(bag_dir: Path | str) -> None:
+    """Raise if the bag is missing topics required for tracking comparison."""
+    topics = bag_topic_names(bag_dir)
+    missing = [topic for topic in EXCITATION_RECORDING_TOPICS if topic not in topics]
+    if missing:
+        joined = ', '.join(missing)
+        raise ValueError(
+            f'Bag {bag_dir} is missing required topic(s): {joined}. '
+            'Re-record with excitation_* or test_trajectory_* launch (record_bag:=true).'
+        )
+
+
+def interpolate_arrays_at_times(
+    query_times_s: np.ndarray,
+    source_times_s: np.ndarray,
+    source_values: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate ``(N, dof)`` samples onto ``query_times_s``."""
+    if source_times_s.size < 2:
+        raise ValueError('Need at least two source samples for interpolation.')
+    if query_times_s.size == 0:
+        return np.empty((0, source_values.shape[1]), dtype=float)
+
+    interpolated = np.empty((query_times_s.size, source_values.shape[1]), dtype=float)
+    for joint_index in range(source_values.shape[1]):
+        interpolated[:, joint_index] = np.interp(
+            query_times_s,
+            source_times_s,
+            source_values[:, joint_index],
+        )
+    return interpolated
+
+
+def interpolate_positions_at_times(
+    query_times_s: np.ndarray,
+    source_times_s: np.ndarray,
+    source_positions: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate ``(N, dof)`` positions onto ``query_times_s``."""
+    return interpolate_arrays_at_times(
+        query_times_s,
+        source_times_s,
+        source_positions,
+    )
+
+
+def overlap_time_mask(
+    query_times_s: np.ndarray,
+    source_times_s: np.ndarray,
+) -> np.ndarray:
+    """Keep query samples that fall within the source time span (inclusive)."""
+    if source_times_s.size == 0:
+        return np.zeros(query_times_s.shape, dtype=bool)
+    start_s = float(source_times_s[0])
+    end_s = float(source_times_s[-1])
+    return (query_times_s >= start_s) & (query_times_s <= end_s)
 
 
 def joint_states_from_bag(
@@ -129,6 +197,108 @@ def joint_states_from_bag(
     return times_s, arrays
 
 
+def _reference_joint_values(
+    reference,
+    *,
+    name_to_index: Dict[str, int],
+    component: str,
+) -> List[float]:
+    values = getattr(reference, component, None)
+    if not values:
+        return [0.0] * len(ARM_JOINTS)
+    return [float(values[name_to_index[joint]]) for joint in ARM_JOINTS]
+
+
+def commanded_reference_from_bag(
+    bag_path: Path | str,
+    *,
+    topic: str = ARM_CONTROLLER_STATE_TOPIC,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Read commanded q/q̇/q̈ from ``JointTrajectoryControllerState.reference``."""
+    try:
+        from rclpy.serialization import deserialize_message
+        from rosidl_runtime_py.utilities import get_message
+    except ImportError as exc:
+        raise ImportError(
+            'rosbag2_py and rclpy are required to read bags. Run inside the ROS 2 container.'
+        ) from exc
+
+    bag_dir = Path(bag_path)
+    if not bag_dir.is_dir():
+        raise FileNotFoundError(f'Bag directory not found: {bag_dir}')
+
+    reader = _open_bag_reader(bag_dir)
+    topic_types = {item.name: item.type for item in reader.get_all_topics_and_types()}
+    if topic not in topic_types:
+        raise ValueError(
+            f'Bag {bag_dir} does not contain {topic}. '
+            'Re-record with excitation_* or test_trajectory_* launch (record_bag:=true).'
+        )
+
+    state_type = get_message(topic_types[topic])
+    timestamps: List[int] = []
+    positions: List[List[float]] = []
+    velocities: List[List[float]] = []
+    accelerations: List[List[float]] = []
+
+    while reader.has_next():
+        bag_topic, payload, timestamp = reader.read_next()
+        if bag_topic != topic:
+            continue
+        message = deserialize_message(payload, state_type)
+        name_to_index = {name: index for index, name in enumerate(message.joint_names)}
+        if not set(ARM_JOINTS).issubset(name_to_index):
+            continue
+        if not message.reference.positions:
+            continue
+
+        timestamps.append(timestamp)
+        positions.append(
+            _reference_joint_values(
+                message.reference,
+                name_to_index=name_to_index,
+                component='positions',
+            )
+        )
+        velocities.append(
+            _reference_joint_values(
+                message.reference,
+                name_to_index=name_to_index,
+                component='velocities',
+            )
+        )
+        accelerations.append(
+            _reference_joint_values(
+                message.reference,
+                name_to_index=name_to_index,
+                component='accelerations',
+            )
+        )
+
+    if not timestamps:
+        raise ValueError(
+            f'No {topic} samples with arm joint reference positions found in {bag_dir}'
+        )
+
+    times_s = np.asarray(timestamps, dtype=float) * 1e-9
+    arrays = {
+        'position': np.asarray(positions, dtype=float),
+        'velocity': np.asarray(velocities, dtype=float),
+        'acceleration': np.asarray(accelerations, dtype=float),
+    }
+    return times_s, arrays
+
+
+def commanded_positions_from_bag(
+    bag_path: Path | str,
+    *,
+    topic: str = ARM_CONTROLLER_STATE_TOPIC,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Read commanded arm positions from ``JointTrajectoryControllerState.reference``."""
+    times_s, arrays = commanded_reference_from_bag(bag_path, topic=topic)
+    return times_s, {'position': arrays['position']}
+
+
 def bag_to_dataset(
     bag_path: Path | str,
     *,
@@ -136,13 +306,27 @@ def bag_to_dataset(
     smooth_window: int = 11,
     trim_start_s: Optional[float] = None,
     trim_end_s: Optional[float] = None,
+    trim_end_reference: str = 'bag_end',
 ) -> IdentificationDataset:
-    """Convert rosbag2 joint_states into a uniform identification dataset."""
+    """Convert rosbag2 joint_states into a uniform identification dataset.
+
+    ``trim_end_reference``:
+    - ``bag_end``: ``trim_end_s`` is cut from the bag's last timestamp (CLI default).
+    - ``bag_start``: ``trim_end_s`` is an absolute offset from the bag's first timestamp
+      (sysid schedule windows from ``identification_trim_times``).
+    """
     times_s, raw = joint_states_from_bag(bag_path)
 
     if trim_start_s is not None or trim_end_s is not None:
         start_time = times_s[0] + (trim_start_s or 0.0)
-        end_time = times_s[-1] - (trim_end_s or 0.0)
+        if trim_end_reference == 'bag_start':
+            end_time = times_s[0] + (trim_end_s or 0.0)
+        elif trim_end_reference == 'bag_end':
+            end_time = times_s[-1] - (trim_end_s or 0.0)
+        else:
+            raise ValueError(
+                f"trim_end_reference must be 'bag_start' or 'bag_end', got {trim_end_reference!r}"
+            )
         mask = (times_s >= start_time) & (times_s <= end_time)
         times_s = times_s[mask]
         raw = {key: value[mask] for key, value in raw.items()}

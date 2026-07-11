@@ -1,0 +1,61 @@
+# Validation / test excitation profile for offline model checks (BIP compare + torque plots).
+# Shorter than full sysid run: 2 Fourier periods (1 discarded → 1 for identification).
+# Uses reproducible template coefficients (not GA).
+
+arm_joints:
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+
+joint_limits:
+  joint1:
+    lower: -3.141592653589793
+    upper: 3.141592653589793
+  joint2:
+    lower: -1.5
+    upper: 1.5
+  joint3:
+    lower: -1.5
+    upper: 1.4
+  joint4:
+    lower: -1.7
+    upper: 1.97
+
+q0:
+  joint1: 0.0
+  joint2: 0.0
+  joint3: -0.05
+  joint4: 0.135
+
+excitation:
+  num_harmonics: 5
+  period_s: 10.0
+  amplitude_fraction: 0.8
+  coefficients_source: template
+
+safety:
+  soft_limit_inset_fraction: 0.1
+  max_velocity_rad_s: 1.0
+  max_acceleration_rad_s2: 2.0
+  velocity_abort_margin_rad_s: 0.05
+
+constraints:
+  end_effector_z_min_m: 0.077
+  end_effector_frame: end_effector_link
+
+runtime:
+  to_q0_duration_s: 5.0
+  ingress_spline_duration_s: 4.0
+  egress_spline_duration_s: 4.0
+  q0_hold_duration_s: 10.0
+  discard_periods: 1
+
+friction:
+  Fv: [0.02, 0.04, 0.015, 0.01]
+  Fc: [0.05, 0.08, 0.04, 0.03]
+
+test_profile:
+  description: >-
+    Model validation trajectory for bip_urdf_compare and torque_compare_plot.
+  default_excitation_periods: 2

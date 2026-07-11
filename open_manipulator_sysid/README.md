@@ -20,35 +20,35 @@ colcon build --packages-select open_manipulator_sysid --symlink-install
 source install/setup.bash
 ```
 
-## Package layout
+## Package layout (domain subpackages)
 
-| Module | Role |
-|--------|------|
-| `excitation_trajectory.py` | Fourier trajectory + safety limits (pure math, no ROS) |
-| `excitation_runner.py` | ROS node: send excitation goal to `arm_controller` |
-| `bag_to_dataset.py` | Rosbag2 → uniform time series |
-| `identification_dataset.py` | `IdentificationDataset`, resampling, validation |
-| `torque_conversion.py` | Dynamixel Present Current LSB → N·m (live + offline) |
-| `measured_torque.py` | ROS node: `/sysid/measured_joint_torque` |
-| `hardware_torque_enable.py` | ROS node: one-shot torque enable |
-| `regress.py` | Offline friction least squares |
-| `comp_eval.py` | Compensation evaluation static gravity residual report |
-| `robot_description.py` | URDF + sysid ros2_control for launch |
+| Subpackage | Role |
+|------------|------|
+| `excitation_trajectory/` | Excitation trajectory, GA optimizer, ROS runner, plots |
+| `excitation_recording/` | Excitation recording bag → `IdentificationDataset` |
+| `five_link_dynamics/` | Five-link SVD BIP, reference tables (`reference_tables.py`) |
+| `system_identification/` | Bag/synthetic LS identify (`identify.py`, `friction.py`) |
+| `model_validation/` | Model validation run — BIP compare, torque/trajectory plots |
+| `pinocchio_support/` | Pinocchio model load, `effective_condition_number` |
+| `reference/` | `sysid_minimal_parameter_reference` CLI |
+| `_experimental/` | Non-production experiments (figaroh script/config) |
 
-**Torque units:** use `torque_conversion` only — there is no separate `torque_sources` module.
+Torque LSB → N·m conversion lives in `excitation_recording/bag_reader.py` (hardware bags).
+
+See [ADR-0012](../docs/adr/0012-omx-sysid-domain-subpackages.md).
 
 ## Phase 1 — Issue 01: excitation trajectory
 
 ### Configuration
 
-`config/excitation.yaml` defines Phase 1 defaults:
+`config/excitation.yaml` — single sysid config (limits, q₀, `ga_coefficients`, `ga_metadata`). GA overwrites the same file.
 
 - **Arm only**: `joint1`–`joint4` (no gripper)
-- **q₀**: joint limit midpoints (`joint1=0`, `joint2=0`, `joint3=-0.05`, `joint4=0.135` rad)
-- **Fourier**: N=5 harmonics, period T=10 s, amplitude 30% of each joint range
-- **Safety**: soft limits (10% inset from hard limits), velocity cap 1.0 rad/s, acceleration cap 2.0 rad/s²
+- **q₀**: excitation center pose (not SRDF home)
+- **Fourier**: N=5 harmonics, period T=10 s; coefficients from GA (`ga_coefficients`)
+- **Safety**: velocity cap 1.0 rad/s, acceleration cap 2.0 rad/s²
 
-Hard limits are taken from `open_manipulator_description` URDF values embedded in the yaml.
+Model validation uses separate `config/test_trajectory.yaml` (short template trajectory).
 
 ### CLI
 
@@ -56,7 +56,18 @@ Print one period of joint positions (validates soft limits and velocity cap firs
 
 ```bash
 ros2 run open_manipulator_sysid excitation_trajectory_print
+ros2 run open_manipulator_sysid sysid_excitation_trajectory_plot
 ```
+
+Offline GA optimization (minimize column-scaled regressor κ; overwrites `excitation.yaml` by default):
+
+```bash
+ros2 run open_manipulator_sysid excitation_ga_optimize
+ros2 run open_manipulator_sysid excitation_ga_optimize --quick   # smoke test
+ros2 run open_manipulator_sysid excitation_ga_optimize --generations 200 --population 120
+```
+
+Online `excitation_runner` and `excitation_*` launch files default to `config/excitation.yaml`.
 
 Optional arguments:
 
@@ -115,10 +126,17 @@ colcon build --packages-select open_manipulator_sysid open_manipulator_descripti
 source install/setup.bash
 ```
 
-Run excitation in Gazebo (records `/joint_states` to `results/bags/` by default, then shuts down):
+Run excitation in Gazebo (records **Excitation recording bag** — `/joint_states` + `/arm_controller/controller_state` — to `/workspace/sysid_results/bags/` by default, then shuts down):
 
 ```bash
 ros2 launch open_manipulator_sysid excitation_gazebo.launch.py
+```
+
+Use template coefficients instead of GA defaults:
+
+```bash
+ros2 launch open_manipulator_sysid excitation_gazebo.launch.py \
+  excitation_config:=$(ros2 pkg prefix open_manipulator_sysid)/share/open_manipulator_sysid/config/excitation.yaml
 ```
 
 Optional launch arguments:
@@ -218,75 +236,27 @@ ros2 run open_manipulator_sysid sysid_regress_bag --bag results/bags/<hardware_r
 
 Hardware sign-off is manual: confirm finite BIP/Fv/Fc in `results/report.html` without NaN parameters.
 
-## Compensation evaluation — Issue 01: static gravity residual report
-
-Offline report for **Static gravity validation** holds recorded under one **Compensation mode** folder (`G`, `G+C`, or `G+C+F`). Computes **Gravity residual** RMS per validation pose using Pinocchio \(G(q)\) aligned with the Pinocchio GC controller (gripper mimic, effort sign flips, torque scaling from optional experiment `metadata.yaml`).
-
-### Directory layout
-
-```
-results/comp_eval/<YYYYMMDD>/
-  metadata.yaml              # optional friction/scaling snapshot
-  G/
-    static/
-      P01_init_run01/        # rosbag2 directory
-      P02_home_run01/
-      ...
-  report/                    # written by comp_eval_report
-    metrics.yaml
-    report.html
-```
-
-### CLI (container)
-
-```bash
-cd ~/ros2_ws
-colcon build --packages-select open_manipulator_sysid --symlink-install
-source install/setup.bash
-
-ros2 run open_manipulator_sysid comp_eval_report \
-  --root results/comp_eval/20250627 \
-  --mode G
-```
-
-Optional arguments:
-
-```bash
-ros2 run open_manipulator_sysid comp_eval_report \
-  --root results/comp_eval/20250627 \
-  --mode G \
-  --config /path/to/compensation_evaluation.yaml \
-  --metadata /path/to/metadata.yaml \
-  --output /path/to/report \
-  --xacro-mapping ros2_control_type:=open_manipulator_x_current
-```
-
-Exits non-zero when no static bags are found, arm joints are missing from `/joint_states`, or effort is all zero after N·m conversion. Does **not** modify `open_manipulator_bringup` GC yaml.
-
-Operator protocol: [docs/open-manipulator-x-compensation-evaluation.md](../docs/open-manipulator-x-compensation-evaluation.md).
-
 ## Package layout
 
 ```
 open_manipulator_sysid/
 ├── config/
 │   ├── excitation.yaml
-│   ├── controller_manager.yaml
-│   └── controller_manager_hardware.yaml
+│   └── test_trajectory.yaml
 ├── launch/
 │   ├── excitation_gazebo.launch.py
-│   └── excitation_hardware.launch.py
+│   └── test_trajectory_gazebo.launch.py
 ├── open_manipulator_sysid/
-│   ├── excitation_trajectory.py
-│   ├── excitation_runner.py
-│   ├── measured_torque.py
-│   ├── hardware_torque_enable.py
-│   ├── robot_description.py
-│   ├── bag_to_dataset.py
-│   ├── comp_eval.py
-│   └── regress.py
+│   ├── excitation_trajectory/
+│   ├── excitation_recording/
+│   ├── five_link_dynamics/
+│   ├── system_identification/
+│   ├── model_validation/
+│   ├── pinocchio_support/
+│   ├── reference/
+│   └── _experimental/
 ├── test/
-└── results/                 # gitignored identification outputs
+└── results/
 ```
 
 ## Isolation
